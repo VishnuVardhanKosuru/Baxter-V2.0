@@ -1,0 +1,72 @@
+name: Code Knowledge Base Scanner
+
+on:
+  workflow_dispatch:
+    inputs:
+      languages:
+        description: 'Comma-separated list of CodeQL languages (python, javascript, java, go, cpp, csharp, ruby). Leave empty for auto-detect.'
+        required: false
+        type: string
+
+jobs:
+  treesitter:
+    name: AST Extraction
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install tree-sitter
+        run: |
+          pip install tree-sitter
+          pip install tree-sitter-python tree-sitter-javascript tree-sitter-typescript
+          pip install tree-sitter-java tree-sitter-go tree-sitter-ruby
+
+      - name: Run AST extractor
+        run: python .github/scripts/extract_ast.py --output ast.json
+
+      - name: Upload AST artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ast-results
+          path: ast.json
+          retention-days: 30
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    # We use a matrix so it can scan multiple languages if needed.
+    # In a real dynamic setup, we'd want to populate this dynamically,
+    # but for simplicity we assume the caller has determined the language.
+    # We will pass the detected languages to CodeQL init.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          # If inputs.languages is empty, CodeQL will attempt to auto-detect
+          languages: ${{ github.event.inputs.languages }}
+          # This is the magic setting: tells CodeQL to NOT compile the code
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          output: sarif-results
+          upload: false
+
+      - name: Upload SARIF as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-results
+          path: sarif-results/
+          retention-days: 30
