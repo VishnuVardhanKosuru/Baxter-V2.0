@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import google.generativeai as genai
 from core.github_client import GitHubClient
+from core.jira_client import JiraClient
 
 
 load_dotenv()
@@ -244,6 +245,17 @@ def main():
                  csv_path = out_dir / "manual" / f"{base_type}_tests_master.csv"
                  append_to_csv(csv_path, csv_rows.strip())
                  print(f"  -> Appended rows to {csv_path}")
+                 
+                 # Sync to Jira
+                 jira = JiraClient()
+                 if jira.is_configured():
+                     for row in csv_rows.strip().splitlines():
+                         parts = row.split(",")
+                         if len(parts) >= 9:
+                             test_id, module, func_name, test_type, scenario, pre_cond, steps, data, expected = parts[:9]
+                             summary = f"[{test_id}] {func_name} - {scenario}"
+                             desc = f"Module: {module}\nPre-conditions: {pre_cond}\nSteps:\n{steps}\nTest Data: {data}\nExpected Result: {expected}"
+                             jira.create_issue(summary=summary, description=desc, issue_type="Bug")
                  
              count += 1
              
