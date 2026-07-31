@@ -38,11 +38,17 @@ def build_prompt(node, G, code_block):
     is_leaf = len(out_edges) == 0
     
     decorators = [d.lower() for d in node.get("decorators", [])]
-    is_web = any(x in d for d in decorators for x in ["route", "mapping", "restcontroller"])
+    is_backend_api = any(x in d for d in decorators for x in ["route", "mapping", "restcontroller"])
     
-    if is_web:
+    file_path = node.get("file", "")
+    is_frontend = file_path.endswith(".js") or file_path.endswith(".jsx") or file_path.endswith(".ts") or file_path.endswith(".tsx")
+    
+    if is_frontend:
         base_type = "ui"
-        strategies.append("UI / End-to-End Testing (Use Selenium WebDriver)")
+        strategies.append("UI / End-to-End Testing (Use Java Selenium WebDriver to interact with DOM elements found in the body)")
+    elif is_backend_api:
+        base_type = "api"
+        strategies.append("API Testing (Use RestAssured or MockMvc for endpoint validation)")
     elif not is_leaf:
         base_type = "integration"
         strategies.append("Integration Testing (Mock dependencies)")
@@ -60,14 +66,14 @@ def build_prompt(node, G, code_block):
 
     strategy_text = "\n".join(f"- {s}" for s in strategies)
 
-    prompt = f"""You are an Expert Enterprise Java QA Automation Engineer.
-Task: Generate a production-grade test suite for the Java function `{node['name']}`.
+    prompt = f"""You are an Expert Enterprise QA Automation Engineer.
+Task: Generate a production-grade test suite for the function `{node['name']}`.
 
 ### Required Testing Strategies:
 {strategy_text}
 
-### Output 1: Automated Java Script
-Generate a complete Java file. You MUST use JUnit. If the strategy dictates UI testing, you MUST use Selenium WebDriver. Do not include package declarations.
+### Output 1: Automated Script
+Generate a complete test file. For Java backend, you MUST use JUnit. For API testing, use RestAssured/MockMvc. For frontend UI testing, write a Java Selenium WebDriver test. Do not include package declarations.
 
 ### Output 2: Manual Test Cases (Strict CSV Rows)
 Generate manual test cases for a human QA. Output ONLY valid CSV rows matching the exact headers below. 
@@ -134,23 +140,23 @@ def main():
     with open(args.kb, 'r') as f:
          data = json.load(f)
 
-    # 1. Java Filtering
+    # 1. Frontend and Backend Filtering
     changed_files_list = []
     if args.changed_files:
         changed_files_list = [f.strip() for f in args.changed_files.split(",") if f.strip()]
         print(f"Delta Mode Active: Restricting tests to {len(changed_files_list)} changed file(s).")
 
-    java_files = set()
+    target_files = set()
     for n in data.get("nodes", []):
-        if n["type"] == "FILE" and n.get("properties", {}).get("language") == "java":
+        if n["type"] == "FILE" and n.get("properties", {}).get("language") in ("java", "javascript", "typescript", "tsx"):
             file_path = n["id"].replace("file://", "")
             if changed_files_list and file_path not in changed_files_list:
                 continue
-            java_files.add(file_path)
+            target_files.add(file_path)
 
     G = nx.DiGraph()
     for n in data.get("nodes", []):
-         if n["type"] == "FUNCTION" and n.get("file") in java_files:
+         if n["type"] == "FUNCTION" and n.get("file") in target_files:
              G.add_node(n["id"], **n)
 
     for edge in data.get("edges", []):
@@ -165,7 +171,7 @@ def main():
     except nx.NetworkXUnfeasible:
          order = sorted(G.nodes(), key=lambda x: G.out_degree(x))
 
-    print(f"Filtered to {len(order)} Java functions. Starting testing loop...")
+    print(f"Filtered to {len(order)} functions. Starting testing loop...")
     
     out_dir = Path("output") / repo_name / "tests"
     (out_dir / "automated/unit").mkdir(parents=True, exist_ok=True)
