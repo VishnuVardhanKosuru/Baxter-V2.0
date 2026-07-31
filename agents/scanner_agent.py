@@ -9,6 +9,7 @@ from core.github_client import GitHubClient
 from core.workflow_manager import WorkflowManager
 from core.artifact_downloader import ArtifactDownloader
 from core.kb_merger import KBMerger
+from tools.get_repo_structure import build_tree_string
 
 # Set your default repository here
 TARGET_REPO = "supriya-daita/LibraryManagementSystem"
@@ -113,6 +114,24 @@ def main():
     with open(out_file, "w") as f:
         json.dump(kb, f, indent=2)
         
+    vuln_out = out_dir / "vulnerabilities_report.json"
+    with open(vuln_out, "w") as f:
+        json.dump(artifacts["sarif"], f, indent=2)
+        
+    try:
+        latest_sha = client.get_latest_commit(owner, repo)
+        response = client.get(f"/repos/{owner}/{repo}/git/trees/{latest_sha}?recursive=1")
+        tree_str = f"Repository Structure: {owner}/{repo} (SHA: {latest_sha[:7]})\n"
+        tree_str += "=" * 50 + "\n"
+        tree_str += build_tree_string(response.get("tree", []))
+        
+        tree_out = out_dir / "repo_structure.txt"
+        with open(tree_out, "w", encoding="utf-8") as f:
+            f.write(tree_str)
+    except Exception as e:
+        print(f"Warning: Failed to fetch repository structure: {e}")
+        tree_out = None
+        
     # 6. Generate Visualization
     graph_out = out_dir / "graph.html"
     print(f"\nGenerating interactive Knowledge Graph visualization...")
@@ -126,6 +145,9 @@ def main():
     
     print(f"\nGenerated Files:")
     print(f"- Knowledge Base Data : {out_file}")
+    print(f"- Vulnerabilities     : {vuln_out}")
+    if tree_out:
+        print(f"- Repo Structure      : {tree_out}")
     print(f"- Interactive Graph   : {graph_out}")
     print(f"\nOpen {graph_out.name} in your web browser to explore the architecture.")
 

@@ -91,7 +91,8 @@ def process_python(tree, source_bytes, rel_path, all_nodes, all_edges):
                     "docstring": docstring,
                     "decorators": decorators,
                     "line_start": node.start_point[0] + 1,
-                    "line_end": node.end_point[0] + 1
+                    "line_end": node.end_point[0] + 1,
+                    "body": extract_node_text(node, source_bytes)
                 })
                 
                 all_edges.append({"source": file_id, "target": func_id, "type": "DEFINES"})
@@ -166,7 +167,8 @@ def process_js_ts(tree, source_bytes, rel_path, all_nodes, all_edges):
                     "docstring": "",
                     "decorators": [],
                     "line_start": node.start_point[0] + 1,
-                    "line_end": node.end_point[0] + 1
+                    "line_end": node.end_point[0] + 1,
+                    "body": extract_node_text(node, source_bytes)
                 })
                 all_edges.append({"source": file_id, "target": func_id, "type": "DEFINES"})
                 
@@ -238,7 +240,8 @@ def process_java(tree, source_bytes, rel_path, all_nodes, all_edges):
                     "docstring": "",
                     "decorators": [],
                     "line_start": node.start_point[0] + 1,
-                    "line_end": node.end_point[0] + 1
+                    "line_end": node.end_point[0] + 1,
+                    "body": extract_node_text(node, source_bytes)
                 })
                 source_id = current_context_id or file_id
                 all_edges.append({"source": source_id, "target": func_id, "type": "DEFINES"})
