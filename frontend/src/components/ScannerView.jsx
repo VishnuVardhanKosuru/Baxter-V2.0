@@ -1,13 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileCode, FunctionSquare, Network, Link, Maximize2, X, Download } from 'lucide-react';
 
 export default function ScannerView({ repo, metrics }) {
   const [isGraphMaximized, setIsGraphMaximized] = useState(false);
+  const [repoStructure, setRepoStructure] = useState("Waiting for scan data...");
+  
+  useEffect(() => {
+    if (metrics.files_scanned === 0) {
+      setRepoStructure("Waiting for scan data...");
+      return;
+    }
+
+    // Attempt to fetch repo structure periodically if it says waiting
+    const interval = setInterval(() => {
+      fetch(`http://localhost:8000/api/repo-structure?repo=${encodeURIComponent(repo)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.content && data.content !== repoStructure) {
+            setRepoStructure(data.content);
+          }
+        })
+        .catch(err => console.error(err));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [repo, repoStructure, metrics.files_scanned]);
   
   // Get owner and repo name to construct path. If invalid, just fallback.
   const repoName = repo.split('/')[1] || "LibraryManagementSystem";
-  // The path depends on where vite is running. If running in frontend/, the output is one level up
-  const graphUrl = `/@fs/C:/Users/2868006/Downloads/GITHUB/TestCaseGeneratorAgent/output/${repoName}/graph.html`;
+  const graphUrl = `http://localhost:8000/api/graph?repo=${encodeURIComponent(repo)}`;
 
   return (
     <>
@@ -33,7 +53,7 @@ export default function ScannerView({ repo, metrics }) {
       <div className="card metric-card metric-red" style={{ marginBottom: '1.25rem', alignItems: 'flex-start' }}>
         <div className="metric-header" style={{ width: '100%', display: 'flex', justifyContent: 'space-between' }}>
           <span>SECURITY VULNERABILITIES</span>
-          <button className="btn-primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.7rem' }} onClick={() => alert('Download Security Report Logic Here')}>
+          <button className="btn-primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.7rem' }} onClick={() => window.location.href = `http://localhost:8000/api/download-security-report?repo=${encodeURIComponent(repo)}`}>
             <Download size={12} /> Download Report
           </button>
         </div>
@@ -43,8 +63,8 @@ export default function ScannerView({ repo, metrics }) {
       <div className="grid-cols-2">
         <div className="card pane">
           <div className="pane-header">REPOSITORY STRUCTURE</div>
-          <div className="pane-content">
-            Waiting for scan data...
+          <div className="pane-content" style={{ display: 'block', padding: '1rem', overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.75rem', textAlign: 'left', background: 'rgba(0,0,0,0.1)' }}>
+            {repoStructure}
           </div>
         </div>
         <div className="card pane">

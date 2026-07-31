@@ -17,3 +17,7 @@ frontend/node_modules/
 # IDE
 .vscode/
 .idea/
+
+# Misc logs & generated files
+conversation_history.jsonl
+repo_structure.txt

@@ -10,6 +10,15 @@ function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [activeTab, setActiveTab] = useState('scanner');
   const [isRunning, setIsRunning] = useState(false);
+  const [theme, setTheme] = useState('dark');
+  
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+  
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
   
   const [metrics, setMetrics] = useState({
     files_scanned: 0,
@@ -64,7 +73,14 @@ function App() {
 
   return (
     <div className="app-container">
-      <Header repo={repo} setRepo={setRepo} onRun={runPipeline} isRunning={isRunning} />
+      <Header 
+        repo={repo} 
+        setRepo={setRepo} 
+        onRun={runPipeline} 
+        isRunning={isRunning} 
+        theme={theme} 
+        onToggleTheme={toggleTheme} 
+      />
       <PipelineTracker currentStep={currentStep} />
       
       <div>

@@ -42,6 +42,32 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-theme='light'] {
+  --bg-color: #f4f6fb;
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --card-border: rgba(0, 0, 0, 0.1);
+  --text-main: #1f2937;
+  --text-muted: #6b7280;
+  --border-color: rgba(0, 0, 0, 0.08);
+  
+  --pastel-blue: #bfdbfe;
+  --pastel-blue-text: #2563eb;
+  
+  --pastel-green: #bbf7d0;
+  --pastel-green-text: #16a34a;
+  
+  --pastel-orange: #fed7aa;
+  --pastel-orange-text: #ea580c;
+  
+  --pastel-red: #fecaca;
+  --pastel-red-text: #dc2626;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-glow: 0 0 30px rgba(139, 92, 246, 0.2);
+}
+
 body {
   margin: 0;
   background-color: var(--bg-color);
@@ -183,6 +209,13 @@ h1, h2, h3, h4, h5, h6, p { margin: 0; }
   color: var(--text-muted);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+[data-theme='light'] .app-name {
+  background: linear-gradient(135deg, #6d28d9, #be185d, #1d4ed8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .header-actions {

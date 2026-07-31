@@ -214,33 +214,98 @@ async def run_pipeline_task(repo: str):
     await notify_listeners("state_update", pipeline_state)
 
 @app.post("/api/run")
-async def run_pipeline(req: RunRequest, background_tasks: BackgroundTasks):
+async def run_pipeline(request: RunRequest, background_tasks: BackgroundTasks):
+    global pipeline_process, pipeline_state
+    
     if pipeline_state["isRunning"]:
         return {"status": "error", "message": "Pipeline is already running"}
+        
+    repo = request.repo
+    pipeline_state["repo_name"] = repo.split("/")[-1]
     
-    background_tasks.add_task(run_pipeline_task, req.repo)
+    # Reset state for the new run
+    pipeline_state["isRunning"] = True
+    pipeline_state["currentStep"] = 0
+    pipeline_state["metrics"] = {
+        "files_scanned": 0,
+        "functions_found": 0,
+        "graph_nodes": 0,
+        "graph_edges": 0,
+        "security_vulns": 0,
+        "unit_tests": 0,
+        "integration_tests": 0,
+        "bva_tests": 0,
+        "security_tests": 0,
+        "jira_tests_created": 0,
+        "jira_project_url": ""
+    }
+    pipeline_state["logs"] = []
+    
+    # Start the process
+    background_tasks.add_task(run_pipeline_task, repo)
     return {"status": "ok", "message": "Pipeline started"}
 
 @app.get("/api/download-tests")
 async def download_tests(repo: str):
-    try:
-        repo_name = repo.split('/')[-1]
-        tests_dir = Path(f"output/{repo_name}/tests")
+    repo_name = repo.split("/")[-1]
+    tests_dir = Path("output") / repo_name / "tests"
+    
+    if not tests_dir.exists():
+        raise HTTPException(status_code=404, detail="Tests not found")
         
-        if not tests_dir.exists():
-            return {"status": "error", "message": "Tests folder not found."}
-            
-        # Create a zip archive of the tests directory
-        archive_path = Path(f"output/{repo_name}_tests")
-        shutil.make_archive(str(archive_path), 'zip', str(tests_dir))
+    # Create zip archive in memory
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(tests_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, tests_dir)
+                zipf.write(file_path, arcname)
+                
+    memory_file.seek(0)
+    
+    return StreamingResponse(
+        memory_file,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={repo_name}_tests.zip"}
+    )
+
+@app.get("/api/repo-structure")
+async def get_repo_structure(repo: str):
+    repo_name = repo.split("/")[-1]
+    structure_path = Path("output") / repo_name / "repo_structure.txt"
+    
+    if not structure_path.exists():
+        return {"content": "Waiting for scan data..."}
         
-        return FileResponse(
-            path=f"{archive_path}.zip", 
-            filename=f"{repo_name}_tests.zip",
-            media_type="application/zip"
-        )
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    with open(structure_path, "r", encoding="utf-8") as f:
+        content = f.read()
+        
+    return {"content": content}
+
+@app.get("/api/graph")
+async def get_graph(repo: str):
+    repo_name = repo.split("/")[-1]
+    graph_path = Path("output") / repo_name / "graph.html"
+    
+    if not graph_path.exists():
+        return HTMLResponse(content="<div style='color:white; padding: 2rem; font-family: monospace;'>Waiting for graph.html...</div>", status_code=404)
+        
+    return FileResponse(graph_path, media_type="text/html")
+
+@app.get("/api/download-security-report")
+async def download_security_report(repo: str):
+    repo_name = repo.split("/")[-1]
+    report_path = Path("output") / repo_name / "vulnerabilities_report.json"
+    
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Security report not found")
+        
+    return FileResponse(
+        report_path,
+        media_type="application/json",
+        filename=f"{repo_name}_security_report.json"
+    )
 
 @app.get("/api/stream")
 async def message_stream(request: Request):
