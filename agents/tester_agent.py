@@ -1,279 +1,830 @@
+# -*- coding: utf-8 -*-
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import os
+import re
 import time
 import json
-import base64
+import csv
 import argparse
-import networkx as nx
 from pathlib import Path
+from collections import defaultdict
 from dotenv import load_dotenv
 import google.generativeai as genai
-from core.github_client import GitHubClient
-
 
 load_dotenv()
 
-CSV_HEADERS = "Test ID,Module Name,Function Name,Test Type,Test Scenario,Pre Conditions,Test Steps,Test Data,Expected Result,Priority,Executed By,Execution Date,Status,Remarks\n"
+# System Prompt
+SYSTEM_PROMPT = """You are a Principal Java QA Automation Engineer specializing in JUnit 5, Mockito, and Spring Boot Test.
 
-def fetch_code_jit(gh_client, owner, repo, file_path, line_start, line_end):
-    """Fetch specific lines of code via GitHub API JIT"""
-    file_data = gh_client.get_file(owner, repo, file_path)
-    if not file_data or "content" not in file_data:
-        return ""
-    
-    content = base64.b64decode(file_data["content"]).decode('utf-8')
-    lines = content.splitlines()
-    start_idx = max(0, line_start - 1)
-    end_idx = min(len(lines), line_end)
-    return "\n".join(lines[start_idx:end_idx])
-
-def build_prompt(node, G, code_block):
-    strategies = []
-    base_type = "unit" # Default
-    
-    out_edges = list(G.out_edges(node['id']))
-    is_leaf = len(out_edges) == 0
-    
-    decorators = [d.lower() for d in node.get("decorators", [])]
-    is_backend_api = any(x in d for d in decorators for x in ["route", "mapping", "restcontroller"])
-    
-    file_path = node.get("file", "")
-    is_frontend = file_path.endswith(".js") or file_path.endswith(".jsx") or file_path.endswith(".ts") or file_path.endswith(".tsx")
-    
-    if is_frontend:
-        base_type = "ui"
-        strategies.append("UI / End-to-End Testing (Use Java Selenium WebDriver to interact with DOM elements found in the body)")
-    elif is_backend_api:
-        base_type = "api"
-        strategies.append("API Testing (Use RestAssured or MockMvc for endpoint validation)")
-    elif not is_leaf:
-        base_type = "integration"
-        strategies.append("Integration Testing (Mock dependencies)")
-    else:
-        strategies.append("Unit Testing (Positive Happy Path)")
-        
-    if len(node.get("parameters", [])) > 0:
-        strategies.append("Boundary Value Analysis (BVA) (Test edge cases, nulls, limits)")
-        
-    if any("throws" in d.lower() for d in decorators) or "exception" in node.get("docstring", "").lower():
-        strategies.append("Negative Testing (Ensure exceptions are thrown gracefully)")
-        
-    if node.get("properties", {}).get("vulnerabilities"):
-        strategies.append("Security / Regression Testing (Test specifically against identified CodeQL vulnerabilities)")
-
-    strategy_text = "\n".join(f"- {s}" for s in strategies)
-
-    prompt = f"""You are an Expert Enterprise QA Automation Engineer.
-Task: Generate a production-grade test suite for the function `{node['name']}`.
-
-### Required Testing Strategies:
-{strategy_text}
-
-### Output 1: Automated Script
-Generate a complete test file. For Java backend, you MUST use JUnit. For API testing, use RestAssured/MockMvc. For frontend UI testing, write a Java Selenium WebDriver test. Do not include package declarations.
-
-### Output 2: Manual Test Cases (Strict CSV Rows)
-Generate manual test cases for a human QA. Output ONLY valid CSV rows matching the exact headers below. 
-Do not output the headers themselves, just the data rows (comma separated).
-For the last 4 columns (Executed By, Execution Date, Status, Remarks), leave the values completely empty.
-The Test ID must be unique and descriptive (e.g., TC_LOGIN_001).
-
-Headers Expected:
-Test ID, Module Name, Function Name, Test Type, Test Scenario, Pre Conditions, Test Steps, Test Data, Expected Result, Priority, Executed By, Execution Date, Status, Remarks
-
+RULES:
+1. Output ONLY one valid compilable Java class in a single ```java ... ``` block.
+2. Use JUnit 5 (org.junit.jupiter.api.*). NEVER use JUnit 4.
+3. Every @Test MUST have a @DisplayName that reads as a full English sentence.
+4. Write ALL package imports explicitly -- no wildcard imports.
+5. Output Java code only. No explanation text outside the code block.
 """
-    if code_block:
-        prompt += f"\nSource Code:\n```java\n{code_block}\n```\n"
+
+# Prompts
+UNIT_HAPPY_PATH_PROMPT = """You are writing a UNIT HAPPY PATH TEST class for `{class_name}.{func_name}()`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Return Type: {return_type}
+  Parameters:  {parameters}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:     @ExtendWith(MockitoExtension.class)
+  Mocks:      {fields_formatted}
+              (declare each as @Mock)
+  Under test: @InjectMocks {class_name} {class_name_lower}
+
+CONSTRUCTORS (use these to build test objects -- do not invent):
+  {constructors_formatted}
+
+WHAT HAPPY PATH MEANS
+  Test that the method works correctly when all inputs are valid and dependencies behave normally.
+
+  Dependencies to stub (use exact arguments below):
+  {calls_formatted}
+  -> for each: when(mockField.method(exactArg)).thenReturn(validValue)
+
+WRITE: class `{class_name}HappyPathTest`
+  1-2 @Test methods:
+    Arrange: build valid input via constructors, stub every dependency
+    Act:     {class_name_lower}.{func_name}(validArgs)
+    Assert:  assertNotNull(result) if object return
+             assertEquals(expectedValue, result.getField())
+    Verify:  verify(mockField, times(1)).method(exactArg) per dependency
+
+Output one compilable Java class in a single ```java block.
+"""
+
+UNIT_NEGATIVE_PROMPT = """You are writing a UNIT NEGATIVE TEST class for `{class_name}.{func_name}()`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Parameters:  {parameters}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:     @ExtendWith(MockitoExtension.class)
+  Mocks:      {fields_formatted}
+  Under test: @InjectMocks {class_name} {class_name_lower}
+
+WHAT NEGATIVE TEST MEANS
+  Test that the method rejects invalid/null inputs before touching any dependency.
+
+  Null checks found in source code (one @Test per check):
+  {null_checks}
+  -> assertThrows(IllegalArgumentException.class, () -> method(null))
+     assertEquals("exact message from body", ex.getMessage())
+     verifyNoInteractions(mock)
+
+  Blank/empty checks found in source code (one @Test per check):
+  {blank_checks}
+  -> assertThrows(IllegalArgumentException.class, ...)
+     verifyNoInteractions(mock)
+
+WRITE: class `{class_name}NegativeTest`
+  One @Test per scenario above.
+  RULE: verifyNoInteractions(mock) in EVERY test.
+
+Output one compilable Java class in a single ```java block.
+"""
+
+UNIT_EXCEPTION_PROMPT = """You are writing a UNIT EXCEPTION TEST class for `{class_name}.{func_name}()`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Parameters:  {parameters}
+  Throws:      {throws_list}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:     @ExtendWith(MockitoExtension.class)
+  Mocks:      {fields_formatted}
+  Under test: @InjectMocks {class_name} {class_name_lower}
+
+CONSTRUCTORS: {constructors_formatted}
+
+WHAT EXCEPTION TEST MEANS
+  Test each declared exception is thrown under its exact trigger condition.
+
+  Exception trigger map (derived from source code -- do NOT invent):
+  {exception_trigger_map}
+
+  For each exception in {throws_list}:
+    Arrange: stub mock to trigger the condition above
+    Assert:  ExType ex = assertThrows(ExType.class, () -> method(...))
+             assertTrue(ex.getMessage().contains("exact fragment from body"))
+    Verify:  verify(mock, never()).save(any()) where save should not have been reached
+
+WRITE: class `{class_name}ExceptionTest`
+  One @Test per declared exception.
+
+Output one compilable Java class in a single ```java block.
+"""
+
+UNIT_BOUNDARY_PROMPT = """You are writing a UNIT BOUNDARY VALUE TEST class for `{class_name}.{func_name}()`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Parameters:  {parameters}
+
+  Source Code (read the comparison branches):
+  {body}
+
+TEST SETUP
+  Runner:     @ExtendWith(MockitoExtension.class)
+  Under test: @InjectMocks {class_name} {class_name_lower}
+  (No @Mock needed if method is pure computation)
+
+WHAT BOUNDARY TEST MEANS
+  Test exact numeric edges -- bugs most commonly hide at boundaries.
+
+  Constraints from annotations (use ONLY these -- do not invent values):
+  {annotation_values_formatted}
+
+  Branch logic from source code:
+  {boundary_branches}
+
+WRITE: class `{class_name}BoundaryTest`
+
+  @ParameterizedTest VALID using @CsvSource:
+    Rows: min, min+1, each branch switch point-1, each switch point, max-1, max
+    Format: input, expectedOutput
+
+  @ParameterizedTest INVALID using @ValueSource:
+    Values: {{ min-1, max+1 }}
+    assertThrows(IllegalArgumentException.class, ...)
+    assertTrue(ex.getMessage().contains("Invalid"))
+
+Output one compilable Java class in a single ```java block.
+"""
+
+UNIT_MOCK_PROMPT = """You are writing a UNIT MOCK INTERACTION TEST class for `{class_name}.{func_name}()`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Parameters:  {parameters}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:     @ExtendWith(MockitoExtension.class)
+  Mocks:      {fields_formatted}
+  Under test: @InjectMocks {class_name} {class_name_lower}
+
+CONSTRUCTORS: {constructors_formatted}
+
+WHAT MOCK INTERACTION TEST MEANS
+  Verify the method calls dependencies with EXACT arguments -- not loose any() matchers.
+  Verify dependencies are NEVER called on early-exit paths.
+
+  CALLS edges with exact arguments:
+  {calls_formatted}
+
+  Early-exit conditions from source code:
+  {early_exit_conditions}
+
+WRITE: class `{class_name}MockTest`
+
+  Test A -- Exact argument verification (one per CALLS edge):
+    Arrange & Act: same as happy path
+    verify(mock, times(1)).method(
+        argThat(arg -> arg.getField().equals("exactValue")))
+    RULE: do NOT use any() in verify()
+
+  Test B -- Never-called verification (one per early-exit condition):
+    Arrange: stub mock to trigger the early exit above
+    assertThrows(...)
+    verify(mock, never()).save(any())
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_CTRL_HAPPY_PATH_PROMPT = """You are writing an INTEGRATION HAPPY PATH TEST for controller `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  HTTP:        {http_method}  {base_url}{endpoint_url}
+  Return Type: {return_type}
+  Parameters:  {parameters}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:   @WebMvcTest({class_name}.class)
+  Declare:  @Autowired MockMvc mockMvc
+            @Autowired ObjectMapper objectMapper
+  MockBeans (declare each as @MockBean):
+  {fields_formatted}
+
+DTO CONSTRUCTORS (do not invent fields):
+  {constructors_formatted}
+
+WHAT HAPPY PATH MEANS
+  Test the endpoint returns correct HTTP status and JSON payload
+  when inputs are valid and service returns a successful response.
+
+  Service stubs (use these exactly):
+  {calls_formatted}
+  -> when(mockBean.method(any(Type.class))).thenReturn(savedObject)
+
+WRITE: class `{class_name}HappyPathIT`
+  1-2 @Test methods:
+    mockMvc.perform({http_method}("{base_url}{endpoint_url}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(validDto)))
+           .andExpect(status().isCreated() / isOk())
+           .andExpect(jsonPath("$.id").value(expectedId))
+           .andExpect(jsonPath("$.name").value("expectedName"))
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_CTRL_NEGATIVE_PROMPT = """You are writing an INTEGRATION NEGATIVE TEST for controller `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  HTTP:        {http_method}  {base_url}{endpoint_url}
+
+TEST SETUP
+  Runner:   @WebMvcTest({class_name}.class)
+  Declare:  @Autowired MockMvc mockMvc
+            @Autowired ObjectMapper objectMapper
+  MockBeans: {fields_formatted}
+
+DTO CONSTRUCTORS: {constructors_formatted}
+
+BOUNDARY CONSTRAINTS (for invalid value ranges):
+  {annotation_values_formatted}
+
+WHAT NEGATIVE TEST MEANS
+  Bean Validation fires BEFORE the service is called -> expect 400 Bad Request.
+
+  Invalid scenarios (one @Test per):
+    - Empty/blank required fields (name = "", email = "")
+    - Malformed email ("not-an-email")
+    - Numeric param below @Min or above @Max from: {annotation_values_formatted}
+
+WRITE: class `{class_name}NegativeIT`
+  One @Test per scenario:
+    NO mock stubbing -- validation fires before service
+    mockMvc.perform(...).andExpect(status().isBadRequest())
+    verifyNoInteractions(mockBean)
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_CTRL_EXCEPTION_PROMPT = """You are writing an INTEGRATION EXCEPTION TEST for controller `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  HTTP:        {http_method}  {base_url}{endpoint_url}
+  Throws:      {throws_list}
+
+  Source Code:
+  {body}
+
+TEST SETUP
+  Runner:   @WebMvcTest({class_name}.class)
+  Declare:  @Autowired MockMvc mockMvc
+            @Autowired ObjectMapper objectMapper
+  MockBeans: {fields_formatted}
+
+DTO CONSTRUCTORS: {constructors_formatted}
+
+WHAT EXCEPTION TEST MEANS
+  GlobalExceptionHandler maps each exception to an HTTP status code.
+
+  Exception-to-HTTP mapping (use this exactly):
+    DuplicateEmailException          -> 409 Conflict
+    PatientNotFoundException         -> 404 Not Found
+    PatientAlreadyInactiveException  -> 400 Bad Request
+    MethodArgumentNotValidException  -> 400 Bad Request
+    Any unlisted exception           -> 500 Internal Server Error
+
+  Service call to stub: {calls_formatted}
+
+WRITE: class `{class_name}ExceptionIT`
+  One @Test per exception in {throws_list}:
+    when(mockBean.method(any())).thenThrow(new ExactException("msg"))
+    mockMvc.perform(...).andExpect(status().isConflict() / isNotFound() / isBadRequest())
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_CTRL_BOUNDARY_PROMPT = """You are writing an INTEGRATION BOUNDARY TEST for controller `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  HTTP:        {http_method}  {base_url}{endpoint_url}
+
+TEST SETUP
+  Runner:   @WebMvcTest({class_name}.class)
+  Declare:  @Autowired MockMvc mockMvc
+            @Autowired ObjectMapper objectMapper
+  MockBeans: {fields_formatted}
+
+BOUNDARY CONSTRAINTS (use ONLY these):
+  {annotation_values_formatted}
+
+WHAT BOUNDARY TEST MEANS
+  Endpoint accepts exact valid edges, rejects values just outside.
+
+WRITE: class `{class_name}BoundaryIT`
+
+  @ParameterizedTest VALID using @CsvSource:
+    Rows: min,200  min+1,200  max-1,200  max,200
+    stub service -> return valid response
+    andExpect(status().isOk() / isCreated())
+
+  @ParameterizedTest INVALID using @ValueSource: {{ min-1, max+1 }}
+    NO stub -- validation fires first
+    andExpect(status().isBadRequest())
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_REPO_HAPPY_PATH_PROMPT = """You are writing an INTEGRATION HAPPY PATH TEST for repository `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Return Type: {return_type}
+  Parameters:  {parameters}
+  Javadoc:     {javadoc}
+
+TEST SETUP
+  Runner:  @DataJpaTest
+  Declare: @Autowired {class_name} repository
+           @Autowired TestEntityManager entityManager
+
+ENTITY CONSTRUCTORS (use these -- do not invent):
+  {constructors_formatted}
+
+WRITE: class `{class_name}HappyPathIT`
+  Arrange: entityManager.persistAndFlush(new Entity(validArgs))
+  Act:     var result = repository.{func_name}(validArg)
+  Assert:
+    Optional -> assertTrue(result.isPresent()) + assertEquals(expected, result.get().getField())
+    boolean  -> assertTrue(result)
+    List     -> assertFalse(result.isEmpty()) + assertEquals(expectedSize, result.size())
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_REPO_NEGATIVE_PROMPT = """You are writing an INTEGRATION NEGATIVE TEST for repository `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class:       {class_name}  (package: {package})
+  Method:      {func_name}
+  Return Type: {return_type}
+
+TEST SETUP
+  Runner:  @DataJpaTest
+  Declare: @Autowired {class_name} repository
+           @Autowired TestEntityManager entityManager
+
+WRITE: class `{class_name}NegativeIT`
+  Arrange: do NOT persist any entity (empty DB)
+  Act:     var result = repository.{func_name}(nonExistentArg)
+  Assert:
+    Optional -> assertTrue(result.isEmpty())
+    boolean  -> assertFalse(result)
+    List     -> assertTrue(result.isEmpty())
+
+Output one compilable Java class in a single ```java block.
+"""
+
+INTEG_REPO_CONSTRAINT_PROMPT = """You are writing an INTEGRATION CONSTRAINT VIOLATION TEST for repository `{class_name}`.
+
+WHAT YOU ARE TESTING
+  Class: {class_name}  (package: {package})
+
+TEST SETUP
+  Runner:  @DataJpaTest
+  Declare: @Autowired {class_name} repository
+           @Autowired TestEntityManager entityManager
+
+ENTITY CONSTRUCTORS:
+  {constructors_formatted}
+
+WRITE: class `{class_name}ConstraintViolationIT`
+
+  @Test - Duplicate unique field:
+    entityManager.persistAndFlush(new Entity("Alice", "same@email.com", 30, "9000000000"))
+    assertThrows(DataIntegrityViolationException.class, () ->
+        entityManager.persistAndFlush(new Entity("Bob", "same@email.com", 25, "9000000001")))
+
+  @Test - Null required field:
+    Build entity with null in @NotNull field
+    assertThrows(DataIntegrityViolationException.class, () ->
+        entityManager.persistAndFlush(invalidEntity))
+
+Output one compilable Java class in a single ```java block.
+"""
+
+TECHNIQUE_PROMPTS = {
+    "unit": {
+        "happy_path": UNIT_HAPPY_PATH_PROMPT,
+        "negative":   UNIT_NEGATIVE_PROMPT,
+        "exception":  UNIT_EXCEPTION_PROMPT,
+        "boundary":   UNIT_BOUNDARY_PROMPT,
+        "mock":       UNIT_MOCK_PROMPT,
+    },
+    "integration_controller": {
+        "happy_path": INTEG_CTRL_HAPPY_PATH_PROMPT,
+        "negative":   INTEG_CTRL_NEGATIVE_PROMPT,
+        "exception":  INTEG_CTRL_EXCEPTION_PROMPT,
+        "boundary":   INTEG_CTRL_BOUNDARY_PROMPT,
+    },
+    "integration_repository": {
+        "happy_path":           INTEG_REPO_HAPPY_PATH_PROMPT,
+        "negative":             INTEG_REPO_NEGATIVE_PROMPT,
+        "constraint_violation": INTEG_REPO_CONSTRAINT_PROMPT,
+    }
+}
+
+FILE_SUFFIX = {
+    "unit": {
+        "happy_path": "HappyPathTest",
+        "negative":   "NegativeTest",
+        "exception":  "ExceptionTest",
+        "boundary":   "BoundaryTest",
+        "mock":       "MockTest",
+    },
+    "integration_controller": {
+        "happy_path": "HappyPathIT",
+        "negative":   "NegativeIT",
+        "exception":  "ExceptionIT",
+        "boundary":   "BoundaryIT",
+    },
+    "integration_repository": {
+        "happy_path":           "HappyPathIT",
+        "negative":             "NegativeIT",
+        "constraint_violation": "ConstraintViolationIT",
+    }
+}
+
+CODE_REQUIRED_TECHNIQUES = {"exception", "mock", "negative"}
+SKIP_METHODS = {
+    "main", "toString", "equals", "hashCode",
+    "getId", "setId", "getName", "setName",
+    "getEmail", "setEmail", "isActive", "setActive"
+}
+
+def get_axis(class_role: str) -> str:
+    if class_role in ("SERVICE", "GENERAL"):
+        return "unit"
+    elif class_role == "CONTROLLER":
+        return "integration_controller"
+    elif class_role == "REPOSITORY":
+        return "integration_repository"
+    return None
+
+def parse_null_checks(body: str) -> list[str]:
+    if not body: return []
+    matches = re.findall(r'if\s*\(([^)]*==\s*null[^)]*)\)', body)
+    return [m.strip() for m in matches]
+
+def parse_blank_checks(body: str) -> list[str]:
+    if not body: return []
+    matches = re.findall(r'if\s*\(([^)]*(?:isEmpty|blank|trim)[^)]*)\)', body)
+    return [m.strip() for m in matches]
+
+def parse_branches(body: str) -> list[str]:
+    if not body: return []
+    branches = []
+    for line in body.splitlines():
+        line_str = line.strip()
+        if line_str.startswith("if") or line_str.startswith("else if") or "return" in line_str:
+            if any(op in line_str for op in ["<", ">", "<=", ">="]):
+                branches.append(line_str)
+    return branches
+
+def parse_early_exits(body: str) -> list[str]:
+    if not body: return []
+    exits = []
+    lines = body.splitlines()
+    for idx, line in enumerate(lines):
+        if "throw new" in line:
+            context = " ".join([lines[i].strip() for i in range(max(0, idx-2), idx+1)])
+            exits.append(context)
+    return exits
+
+def map_exception_triggers(throws_list: list, body: str) -> list[str]:
+    if not body or not throws_list: return []
+    triggers = []
+    for exc in throws_list:
+        exc_clean = exc.split(".")[-1]
+        for line in body.splitlines():
+            if f"throw new {exc_clean}" in line:
+                triggers.append(f"{exc_clean} -> {line.strip()}")
+    return triggers
+
+def parse_http_method(annotations: list) -> str:
+    for ann in annotations:
+        ann_l = ann.lower()
+        if "postmapping" in ann_l: return "post"
+        if "getmapping" in ann_l: return "get"
+        if "putmapping" in ann_l: return "put"
+        if "deletemapping" in ann_l: return "delete"
+    return "post"
+
+def parse_base_url(class_annotations: list) -> str:
+    for ann in class_annotations:
+        if "requestmapping" in ann.lower():
+            m = re.search(r'\(["\']([^"\']+)["\']\)', ann)
+            if m: return m.group(1)
+    return ""
+
+def parse_endpoint_url(annotations: list) -> str:
+    for ann in annotations:
+        if any(x in ann.lower() for x in ["mapping"]):
+            m = re.search(r'\(["\']([^"\']+)["\']\)', ann)
+            if m: return m.group(1)
+    return ""
+
+
+
+def get_applicable_techniques(axis: str, func: dict, ctx: dict, outgoing_calls: list) -> list[str]:
+    techniques = ["happy_path"]
+
+    if axis == "unit":
+        if ctx.get("null_checks") or ctx.get("blank_checks"):
+            techniques.append("negative")
+        if func.get("throws"):
+            techniques.append("exception")
+        if ctx.get("annotation_values_formatted") or ctx.get("boundary_branches"):
+            techniques.append("boundary")
+        if outgoing_calls:
+            techniques.append("mock")
+
+    elif axis == "integration_controller":
+        if ctx.get("null_checks") or ctx.get("blank_checks") or ctx.get("annotation_values_formatted"):
+            techniques.append("negative")
+        if func.get("throws"):
+            techniques.append("exception")
+        if ctx.get("annotation_values_formatted") or ctx.get("boundary_branches"):
+            techniques.append("boundary")
+
+    elif axis == "integration_repository":
+        techniques.append("negative")
+        techniques.append("constraint_violation")
+
+    return techniques
+
+def needs_body(applicable_techniques: list) -> bool:
+    return bool(set(applicable_techniques) & CODE_REQUIRED_TECHNIQUES)
+
+def build_context(func: dict, parent_class: dict, outgoing_calls: list, include_body: bool) -> dict:
+    body_text = func.get("body", "") if include_body else "(not required for these techniques)"
+
+    null_checks        = parse_null_checks(body_text)
+    blank_checks       = parse_blank_checks(body_text)
+    boundary_branches  = parse_branches(body_text)
+    early_exits        = parse_early_exits(body_text)
+    exception_triggers = map_exception_triggers(func.get("throws", []), body_text)
+
+    calls_formatted = "\n".join([
+        f"  {e.get('object','')}.{e.get('target','')}({', '.join(e.get('arguments', []))}) -> {e.get('callee_return_type', 'void')}"
+        for e in outgoing_calls
+    ])
+
+    fields_formatted = "\n".join([
+        f"  {f.get('type','')} {f.get('name','')}" for f in parent_class.get("fields", [])
+    ])
+    constructors_formatted = "\n".join([
+        f"  new {parent_class.get('name', '')}({', '.join(c.get('params', []))})"
+        for c in parent_class.get("constructors", [])
+    ])
+
+    file_path = func.get("file", "")
+    if "src/main/java/" in file_path:
+        package = file_path.split("src/main/java/")[-1].rsplit("/", 1)[0].replace("/", ".")
     else:
-        prompt += "\nNote: Source code is intentionally omitted. Base your Black-Box tests entirely on the provided metadata.\n"
-        
-    prompt += f"\nContext (Parameters, Docs, Decorators, Vulnerabilities):\n{json.dumps(node, indent=2)}\n"
-    
-    if len(out_edges) > 0:
-        prompt += "\nMock or integrate the following dependencies:\n"
-        for _, target in out_edges:
-            dep_node = G.nodes.get(target)
-            if dep_node:
-                prompt += f"- {dep_node.get('name')}: {json.dumps(dep_node, indent=2)}\n"
+        package = "com.medibook"
 
-    prompt += "\nFormat your response exactly as follows:\n"
-    prompt += "For each test strategy, output a separate Java file block using specific tags: [JAVA:POSITIVE], [JAVA:BVA], [JAVA:NEGATIVE], [JAVA:SECURITY].\n"
-    prompt += "Example:\n[JAVA:POSITIVE]\n<junit code>\n[/JAVA:POSITIVE]\n[JAVA:BVA]\n<junit code>\n[/JAVA:BVA]\n"
-    prompt += "[CSV]\n<csv rows here>\n[/CSV]\n"
-    return prompt, base_type
+    class_name = func.get("class_name", "UnknownClass")
+    class_name_lower = class_name[0].lower() + class_name[1:] if class_name else "target"
 
-def append_to_csv(filepath, rows_str):
-    """Appends rows to a master CSV file, creating headers if it doesn't exist."""
-    path = Path(filepath)
-    needs_headers = not path.exists()
+    return {
+        "package":                    package,
+        "class_name":                 class_name,
+        "class_name_lower":           class_name_lower,
+        "class_role":                 func.get("class_role", ""),
+        "class_annotations":          ", ".join(parent_class.get("annotations", [])),
+        "func_name":                  func.get("name", ""),
+        "return_type":                func.get("return_type", ""),
+        "parameters":                 ", ".join(func.get("parameters", [])),
+        "throws_list":                ", ".join(func.get("throws", [])),
+        "annotations":                ", ".join(func.get("annotations", [])),
+        "javadoc":                    func.get("javadoc", ""),
+        "body":                       body_text,
+        "fields_formatted":           fields_formatted or "(none)",
+        "constructors_formatted":     constructors_formatted or f"  new {class_name}()",
+        "calls_formatted":            calls_formatted or "(none)",
+        "annotation_values_formatted": func.get("annotation_values_formatted", "(none)"),
+        "null_checks":                "\n  ".join(null_checks) or "(none detected)",
+        "blank_checks":               "\n  ".join(blank_checks) or "(none detected)",
+        "boundary_branches":          "\n  ".join(boundary_branches) or "(none detected)",
+        "early_exit_conditions":      "\n  ".join(early_exits) or "(none detected)",
+        "exception_trigger_map":      "\n  ".join(exception_triggers) or "(none detected)",
+        "http_method":                parse_http_method(func.get("annotations", [])),
+        "base_url":                   parse_base_url(parent_class.get("annotations", [])),
+        "endpoint_url":               parse_endpoint_url(func.get("annotations", [])),
+    }
+
+def extract_java_block(text: str) -> str:
+    if "```java" in text:
+        block = text.split("```java")[1].split("```")[0].strip()
+        return block
+    elif "```" in text:
+        block = text.split("```")[1].split("```")[0].strip()
+        return block
+    return text.strip()
+
+def append_csv(csv_path: Path, class_name: str, func_name: str, axis: str, technique: str, out_file: str):
+    header = ["ClassName", "FunctionName", "Axis1", "Axis2Technique", "OutputFile"]
+    needs_header = not csv_path.exists()
     
-    with open(path, "a", encoding="utf-8") as f:
-        if needs_headers:
-            f.write(CSV_HEADERS)
-        f.write(rows_str)
-        if not rows_str.endswith("\n"):
-            f.write("\n")
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if needs_header:
+            writer.writerow(header)
+        writer.writerow([class_name, func_name, axis, technique, out_file])
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--repo', default='supriya-daita/LibraryManagementSystem', help="GitHub repo owner/name")
-    parser.add_argument('--kb', default=r'output\LibraryManagementSystem\kb.json', help="Path to kb.json")
-    parser.add_argument('--limit', type=int, default=999999, help="Max nodes to process")
-    parser.add_argument('--changed-files', type=str, default="", help="Comma separated list of modified files to test")
+    parser = argparse.ArgumentParser(description="Tester Agent V2")
+    parser.add_argument('--repo', default='Lavanya-2402/Medibook', help="Repo owner/name")
+    parser.add_argument('--kb', default=r'output\Medibook\kb.json', help="Path to kb.json")
+    parser.add_argument('--out-dir', default='', help="Output directory")
     args = parser.parse_args()
 
-    gh_pat = os.getenv("GITHUB_PAT")
     gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gh_pat or not gemini_key:
-         print("Ensure GITHUB_PAT and GEMINI_API_KEY are set in .env")
-         return
+    if not gemini_key:
+        print("Error: GEMINI_API_KEY environment variable is not set.")
+        sys.exit(1)
 
-    owner, repo_name = args.repo.split('/')
-    gh_client = GitHubClient(gh_pat)
     genai.configure(api_key=gemini_key)
     model = genai.GenerativeModel('gemini-3.5-flash-lite')
 
-    print(f"Loading Knowledge Graph from {args.kb}...")
-    with open(args.kb, 'r') as f:
-         data = json.load(f)
+    kb_path = Path(args.kb)
+    if not kb_path.exists():
+        print(f"Error: kb.json not found at {kb_path}")
+        sys.exit(1)
 
-    # 1. Frontend and Backend Filtering
-    changed_files_list = []
-    if args.changed_files:
-        changed_files_list = [f.strip() for f in args.changed_files.split(",") if f.strip()]
-        print(f"Delta Mode Active: Restricting tests to {len(changed_files_list)} changed file(s).")
+    print(f"Loading Knowledge Base from {kb_path}...")
+    with open(kb_path, "r", encoding="utf-8") as f:
+        kb_data = json.load(f)
 
-    target_files = set()
-    for n in data.get("nodes", []):
-        if n["type"] == "FILE" and n.get("properties", {}).get("language") in ("java", "javascript", "typescript", "tsx"):
-            file_path = n["id"].replace("file://", "")
-            if changed_files_list and file_path not in changed_files_list:
+    nodes = kb_data.get("nodes", [])
+    edges = kb_data.get("edges", [])
+
+    repo_name = args.repo.split('/')[-1]
+    if args.out_dir:
+        out_base = Path(args.out_dir)
+    else:
+        out_base = Path("output") / repo_name
+
+    out_base.mkdir(parents=True, exist_ok=True)
+
+    classes_by_name = {n["name"]: n for n in nodes if n.get("type") == "CLASS"}
+    calls_by_func = defaultdict(list)
+    for e in edges:
+        if e.get("type") == "CALLS":
+            calls_by_func[e["source"]].append(e)
+
+    def is_dto_or_getter(func, parent_class):
+        name = func.get("name", "")
+        cname = func.get("class_name", "")
+        crole = parent_class.get("class_role") or func.get("class_role")
+        if crole in ("ENTITY", "DTO"):
+            return True
+        if any(cname.endswith(suffix) for suffix in ["Request", "Response", "DTO", "Dto"]):
+            return True
+        if name.startswith("get") or name.startswith("set") or name.startswith("is"):
+            return True
+        return False
+
+    func_nodes = [
+        n for n in nodes
+        if n.get("type") == "FUNCTION"
+        and n.get("file", "").endswith(".java")
+        and n.get("class_name")
+        and n.get("name") not in SKIP_METHODS
+        and not is_dto_or_getter(n, classes_by_name.get(n.get("class_name"), {}))
+    ]
+
+    print(f"Found {len(func_nodes)} testable target functions.")
+
+    # ── PHASE 2: PLAN ──
+    test_plan = []
+    for func in func_nodes:
+        class_role = func.get("class_role", "GENERAL")
+        axis = get_axis(class_role)
+        if not axis:
+            continue
+
+        parent_class = classes_by_name.get(func.get("class_name"), {})
+        outgoing_calls = calls_by_func.get(func.get("id"), [])
+
+        raw_ctx = build_context(func, parent_class, outgoing_calls, include_body=False)
+        applicable = get_applicable_techniques(axis, func, raw_ctx, outgoing_calls)
+        include_body = needs_body(applicable)
+
+        ctx = build_context(func, parent_class, outgoing_calls, include_body)
+        axis_short = "unit" if axis == "unit" else "integration"
+        suffixes = FILE_SUFFIX[axis]
+
+        out_files = {
+            t: str(Path("tests") / axis_short / t / f"{func.get('class_name')}{suffixes[t]}.java")
+            for t in applicable
+        }
+
+        test_plan.append({
+            "class": func.get("class_name"),
+            "func": func.get("name"),
+            "axis": axis,
+            "techniques": applicable,
+            "include_body": include_body,
+            "out_files": out_files,
+            "context": ctx
+        })
+
+    plan_path = out_base / "test_plan.json"
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(test_plan, f, indent=2)
+    print(f"Saved test plan ({len(test_plan)} tasks) to {plan_path}")
+
+    # ── PHASE 3: GENERATE ──
+    csv_path = out_base / "test_matrix_summary.csv"
+
+    for idx, task in enumerate(test_plan, 1):
+        print(f"\n[{idx}/{len(test_plan)}] Processing {task['class']}.{task['func']}() -> Techniques: {task['techniques']}")
+        
+        for technique in task["techniques"]:
+            rel_file = task["out_files"][technique]
+            full_file = out_base / rel_file
+
+            if full_file.exists():
+                print(f"  [SKIP] {rel_file} already exists.")
                 continue
-            target_files.add(file_path)
 
-    G = nx.DiGraph()
-    for n in data.get("nodes", []):
-         if n["type"] == "FUNCTION" and n.get("file") in target_files:
-             G.add_node(n["id"], **n)
+            prompt_tmpl = TECHNIQUE_PROMPTS[task["axis"]][technique]
+            prompt = prompt_tmpl.format(**task["context"])
 
-    for edge in data.get("edges", []):
-         if edge["type"] == "CALLS" and edge["source"] in G and edge["target"] in G:
-             if edge["source"] != edge["target"]:
-                 G.add_edge(edge["source"], edge["target"])
+            full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
 
-    # 2. Topological Sort
-    try:
-         order = list(nx.topological_sort(G))
-         order.reverse()
-    except nx.NetworkXUnfeasible:
-         order = sorted(G.nodes(), key=lambda x: G.out_degree(x))
+            print(f"  -> Generating {technique} test ({rel_file})...")
+            success = False
+            for attempt in range(1, 4):
+                try:
+                    response = model.generate_content(full_prompt)
+                    java_code = extract_java_block(response.text)
 
-    print(f"Filtered to {len(order)} functions. Starting testing loop...")
-    
-    out_dir = Path("output") / repo_name / "tests"
-    (out_dir / "automated/unit").mkdir(parents=True, exist_ok=True)
-    (out_dir / "automated/integration").mkdir(parents=True, exist_ok=True)
-    (out_dir / "automated/ui").mkdir(parents=True, exist_ok=True)
-    (out_dir / "manual").mkdir(parents=True, exist_ok=True)
+                    full_file.parent.mkdir(parents=True, exist_ok=True)
+                    full_file.write_text(java_code, encoding="utf-8")
+                    print(f"  -> Saved: {full_file}")
 
-    count = 0
-    metric_counts = {"tests_unit": 0, "tests_integration": 0, "tests_bva": 0, "tests_security": 0}
-    report_lines = ["# Test Strategy Segregation Report\n\n| Function | Test Type | Reason |", "|---|---|---|"]
-    
-    for node_id in order:
-        if count >= args.limit:
-            break
-            
-        node = G.nodes[node_id]
-        print(f"\nProcessing [{count+1}/{args.limit}]: {node.get('name')}...")
+                    append_csv(csv_path, task["class"], task["func"], task["axis"], technique, rel_file)
+                    time.sleep(4.2)
+                    success = True
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "Quota exceeded" in err_str:
+                        print(f"  -> Rate limit hit (attempt {attempt}/3). Sleeping 20s before retry...")
+                        time.sleep(20.0)
+                    else:
+                        print(f"  -> Error generating {technique} for {task['class']}.{task['func']}: {e}")
+                        time.sleep(5.0)
+                        break
 
-        
-        # JIT conditional fetching (only for Leaf nodes / Unit tests)
-        code_block = ""
-        is_leaf = G.out_degree(node_id) == 0
-        if is_leaf:
-            code_block = fetch_code_jit(gh_client, owner, repo_name, node["file"], node.get("line_start", 0), node.get("line_end", 0))
-
-        prompt, base_type = build_prompt(node, G, code_block)
-        
-        # Log to report
-        applied_strats = []
-        if base_type == "ui": applied_strats.append("UI")
-        elif not is_leaf: applied_strats.append("Integration")
-        else: applied_strats.append("Unit")
-        
-        if len(node.get("parameters", [])) > 0: applied_strats.append("BVA")
-        if any("throws" in d.lower() for d in [d.lower() for d in node.get("decorators", [])]) or "exception" in node.get("docstring", "").lower(): applied_strats.append("Negative")
-        if node.get("properties", {}).get("vulnerabilities"): applied_strats.append("Security")
-            
-        reason = " + ".join(applied_strats)
-        report_lines.append(f"| `{node.get('name')}` | {base_type.upper()} | Built with strategies: {reason} |")
-        
-        try:
-             print("  -> Generating tests with Gemini...")
-
-             response = model.generate_content(prompt)
-             text = response.text
-             import re
-             java_blocks = {}
-             # Find all blocks like [JAVA:BVA]...[/JAVA:BVA]
-             for match in re.finditer(r'\[JAVA:([^\]]+)\](.*?)\[/JAVA:\1\]', text, re.DOTALL):
-                 tag = match.group(1).lower().strip()
-                 code = match.group(2).strip()
-                 if code.startswith("```java"): code = code[7:]
-                 if code.startswith("```"): code = code[3:]
-                 if code.endswith("```"): code = code[:-3]
-                 java_blocks[tag] = code.strip()
-
-             csv_rows = ""
-             if "[CSV]" in text and "[/CSV]" in text:
-                 csv_rows = text.split("[CSV]")[1].split("[/CSV]")[0].strip()
-                 if csv_rows.startswith("```csv"): csv_rows = csv_rows[6:]
-                 if csv_rows.startswith("```"): csv_rows = csv_rows[3:]
-                 if csv_rows.endswith("```"): csv_rows = csv_rows[:-3]
-                     
-             safe_name = node.get('name', 'unnamed').replace("<", "").replace(">", "").replace("/", "_")
-             
-             # Segregated Sub-Folder File Saving
-             for tag, code in java_blocks.items():
-                 folder_path = out_dir / "automated" / base_type / tag
-                 folder_path.mkdir(parents=True, exist_ok=True)
-                 java_path = folder_path / f"{safe_name}Test.java"
-                 with open(java_path, "w") as f:
-                     f.write(code)
-                 print(f"  -> Saved {java_path}")
-                 
-             # Consolidated CSV Appending
-             if csv_rows:
-                 csv_path = out_dir / "manual" / f"{base_type}_tests_master.csv"
-                 append_to_csv(csv_path, csv_rows.strip())
-                 print(f"  -> Appended rows to {csv_path}")
-                 
-             count += 1
-             
-             # Update live UI metrics
-             if "Unit" in applied_strats: metric_counts["tests_unit"] += 1
-             if "Integration" in applied_strats: metric_counts["tests_integration"] += 1
-             if "BVA" in applied_strats: metric_counts["tests_bva"] += 1
-             if "Security" in applied_strats: metric_counts["tests_security"] += 1
-
-             
-             # Rate Limit Protection (15 RPM = 1 request every 4 seconds)
-             print("  -> Sleeping 4.5 seconds to respect API rate limits...")
-             time.sleep(4.5)
-             
-        except Exception as e:
-             print(f"  -> Error: {e}")
-             print("  -> Sleeping 10 seconds before retry...")
-             time.sleep(10)
-
-    # Save the report
-    with open(out_dir / "test_strategy_report.md", "w") as f:
-        f.write("\n".join(report_lines))
-    print(f"\nSaved {out_dir}/test_strategy_report.md")
-    print("\nTesting complete.")
+    print("\nTester Agent V2 completed successfully!")
+    print(f"Outputs written to {out_base}")
 
 if __name__ == "__main__":
     main()

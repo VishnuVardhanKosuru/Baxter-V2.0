@@ -5,6 +5,9 @@ import argparse
 import subprocess
 from pathlib import Path
 
+# Add project root directory to sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from core.github_client import GitHubClient
 from core.workflow_manager import WorkflowManager
 from core.artifact_downloader import ArtifactDownloader
@@ -12,7 +15,7 @@ from core.kb_merger import KBMerger
 from tools.get_repo_structure import build_tree_string
 
 # Set your default repository here
-TARGET_REPO = "supriya-daita/LibraryManagementSystem"
+TARGET_REPO = "Lavanya-2402/Medibook"
 
 def load_env():
     """Load variables from .env file into os.environ"""
@@ -89,23 +92,23 @@ def main():
     # 3. Download artifacts
     try:
         artifacts = downloader.fetch_artifacts(owner, repo, run_id)
-        if not artifacts["ast"] and not artifacts["sarif"]:
-            print("Warning: No AST or SARIF artifacts found.")
+        if not artifacts["ast"] and not artifacts["structural"]:
+            print("Warning: No AST or Structural artifacts found.")
     except Exception as e:
         print(f"Error downloading artifacts: {e}")
         sys.exit(1)
         
     # 4. Merge into KB
+    kb = KBMerger.merge(
+        repo=args.repo,
+        ast_data=artifacts["ast"],
+        sarif_data_list=artifacts.get("sarif", []),
+        structural_data=artifacts.get("structural", {})
+    )
 
-    kb = KBMerger.merge(args.repo, artifacts["ast"], artifacts["sarif"])
-    
-
-    
     files_count = sum(1 for n in kb.get('nodes', []) if n.get('type') == 'FILE')
     funcs_count = sum(1 for n in kb.get('nodes', []) if n.get('type') == 'FUNCTION')
 
-
-    
     # 5. Save output
     out_dir = Path(args.output) / repo
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -114,9 +117,10 @@ def main():
     with open(out_file, "w") as f:
         json.dump(kb, f, indent=2)
         
-    vuln_out = out_dir / "vulnerabilities_report.json"
-    with open(vuln_out, "w") as f:
-        json.dump(artifacts["sarif"], f, indent=2)
+    # PAUSED: Vulnerabilities report writing (commented out)
+    # vuln_out = out_dir / "vulnerabilities_report.json"
+    # with open(vuln_out, "w") as f:
+    #     json.dump(artifacts["sarif"], f, indent=2)
         
     try:
         latest_sha = client.get_latest_commit(owner, repo)
@@ -145,7 +149,7 @@ def main():
     
     print(f"\nGenerated Files:")
     print(f"- Knowledge Base Data : {out_file}")
-    print(f"- Vulnerabilities     : {vuln_out}")
+    # PAUSED: print(f"- Vulnerabilities     : {vuln_out}")
     if tree_out:
         print(f"- Repo Structure      : {tree_out}")
     print(f"- Interactive Graph   : {graph_out}")

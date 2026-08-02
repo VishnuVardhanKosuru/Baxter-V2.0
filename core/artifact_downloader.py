@@ -9,11 +9,12 @@ class ArtifactDownloader:
         self.client = client
 
     def fetch_artifacts(self, owner: str, repo: str, run_id: int) -> Dict[str, Any]:
-        """Download and extract AST and SARIF JSONs from artifacts in memory."""
+        """Download and extract AST and CodeQL structural JSONs from artifacts in memory."""
         print(f"Fetching artifacts for run {run_id}...")
         artifacts_info = self.client.get_run_artifacts(owner, repo, run_id)
         
         ast_data = {}
+        structural_data = {}
         sarif_data = []
 
         for artifact in artifacts_info.get("artifacts", []):
@@ -22,13 +23,19 @@ class ArtifactDownloader:
                 print("  Downloading AST artifact...")
                 zip_bytes = self.client.download_artifact(owner, repo, artifact["id"])
                 ast_data = self._extract_json_from_zip(zip_bytes, "ast.json")
-            elif name == "codeql-results":
-                print("  Downloading CodeQL SARIF artifact...")
+            elif name == "codeql-structural":
+                print("  Downloading CodeQL structural artifact...")
                 zip_bytes = self.client.download_artifact(owner, repo, artifact["id"])
-                sarif_data.extend(self._extract_all_sarifs_from_zip(zip_bytes))
+                structural_data = self._extract_json_from_zip(zip_bytes, "codeql_structural.json")
+            # PAUSED: Vulnerability SARIF downloading (commented out)
+            # elif name == "codeql-results":
+            #     print("  Downloading CodeQL SARIF artifact...")
+            #     zip_bytes = self.client.download_artifact(owner, repo, artifact["id"])
+            #     sarif_data.extend(self._extract_all_sarifs_from_zip(zip_bytes))
                 
         return {
             "ast": ast_data,
+            "structural": structural_data,
             "sarif": sarif_data
         }
 
