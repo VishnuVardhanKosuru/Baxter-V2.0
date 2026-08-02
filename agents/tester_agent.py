@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import os
 import re
 import time
+import asyncio
 import json
 import csv
 import argparse
@@ -20,10 +21,14 @@ SYSTEM_PROMPT = """You are a Principal Java QA Automation Engineer specializing 
 
 RULES:
 1. Output ONLY one valid compilable Java class in a single ```java ... ``` block.
-2. Use JUnit 5 (org.junit.jupiter.api.*). NEVER use JUnit 4.
-3. Every @Test MUST have a @DisplayName that reads as a full English sentence.
-4. Write ALL package imports explicitly -- no wildcard imports.
-5. Output Java code only. No explanation text outside the code block.
+2. STRICT RETURN TYPE RULE: Every test method MUST use the exact standard Java keyword 'void' as its return type (e.g., 'void testSomething()'). NEVER prepend typos, prefixes, or random characters to 'void' (such as 'wbvoid', 'bvoid', or 'vvoid').
+3. ALWAYS use the EXACT method name provided in the context when calling the class under test. Do NOT invent, abbreviate, or shorten method names.
+4. STRICT CONSTRUCTOR RULE: Use ONLY the exact constructor signatures provided in the prompt context (or no-arg constructor + setters). NEVER invent a constructor with a different number of arguments than listed in CONSTRUCTORS.
+5. Mockito STUB RULE: When stubbing method calls with when(mock.method(any(...))), the type inside any(...) MUST match the method parameter type, OR use plain any(). Never pass a DTO type to any() if the target method expects an Entity or Model type.
+6. Use JUnit 5 (org.junit.jupiter.api.*). NEVER use JUnit 4.
+7. Every @Test MUST have a @DisplayName that reads as a full English sentence.
+8. Write ALL package imports explicitly -- no wildcard imports.
+9. Output Java code only. No explanation text outside the code block.
 """
 
 # Prompts
@@ -246,6 +251,7 @@ WHAT HAPPY PATH MEANS
 
   Service stubs (use these exactly):
   {calls_formatted}
+  -> RULE: when stubbing service methods with when(mockBean.method(any(...))), use any() or any(ExactServiceParamType.class). NEVER use the HTTP DTO type if it differs from the service method parameter type.
   -> when(mockBean.method(any(Type.class))).thenReturn(savedObject)
 
 WRITE: class `{class_name}HappyPathIT`
@@ -657,14 +663,38 @@ def build_context(func: dict, parent_class: dict, outgoing_calls: list, include_
         "endpoint_url":               parse_endpoint_url(func.get("annotations", [])),
     }
 
+def sanitize_java_code(java_code: str) -> str:
+    """Fixes common LLM syntax glitches like missing 'void' return types, typos like 'wbvoid', and mismatched any(Class.class) stubs."""
+    # 1. Clean up typos where LLM or regex artifact created 'wbvoid', 'bvoid', etc.
+    java_code = re.sub(r'\b[a-zA-Z]{1,3}void\b', 'void', java_code)
+
+    # 2. Insert 'void' before test method names if return type was omitted after @Test / @DisplayName
+    # Matches: @Test (optional @DisplayName) followed by an identifier starting a method without a return type
+    pattern_missing_void = r'(@Test\s*(?:\n\s*@DisplayName\([^)]+\))?\s*\n\s*)([a-zA-Z0-9_]+\s*\(\)\s*\{)'
+    def replace_missing_void(match):
+        prefix = match.group(1)
+        method_sig = match.group(2)
+        # If method_sig doesn't start with a known modifier or return type, prepend void
+        if not re.match(r'^(?:public|protected|private|void|static)\b', method_sig):
+            return f"{prefix}void {method_sig}"
+        return match.group(0)
+
+    java_code = re.sub(pattern_missing_void, replace_missing_void, java_code)
+
+    # 3. Replace any(AnyClass.class) in Mockito stubs/verifications with plain any() to eliminate type inference compilation errors
+    pattern_any = r'any\s*\(\s*[A-Za-z0-9_\.]+\.class\s*\)'
+    java_code = re.sub(pattern_any, 'any()', java_code, flags=re.IGNORECASE)
+
+    return java_code
+
 def extract_java_block(text: str) -> str:
     if "```java" in text:
         block = text.split("```java")[1].split("```")[0].strip()
-        return block
+        return sanitize_java_code(block)
     elif "```" in text:
         block = text.split("```")[1].split("```")[0].strip()
-        return block
-    return text.strip()
+        return sanitize_java_code(block)
+    return sanitize_java_code(text.strip())
 
 def append_csv(csv_path: Path, class_name: str, func_name: str, axis: str, technique: str, out_file: str):
     header = ["ClassName", "FunctionName", "Axis1", "Axis2Technique", "OutputFile"]
@@ -681,6 +711,7 @@ def main():
     parser.add_argument('--repo', default='Lavanya-2402/Medibook', help="Repo owner/name")
     parser.add_argument('--kb', default=r'output\Medibook\kb.json', help="Path to kb.json")
     parser.add_argument('--out-dir', default='', help="Output directory")
+    parser.add_argument('--model', default='gemini-2.0-flash', help="Gemini model name")
     args = parser.parse_args()
 
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -688,8 +719,14 @@ def main():
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    genai.configure(api_key=gemini_key)
-    model = genai.GenerativeModel('gemini-3.5-flash-lite')
+    genai.configure(api_key=gemini_key, transport='rest')
+
+    # Fallback model list if daily quota is reached on primary model
+    FALLBACK_MODELS = [args.model, 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001', 'gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-pro-latest']
+    # Deduplicate preserving order
+    model_list = list(dict.fromkeys(FALLBACK_MODELS))
+    current_model_idx = 0
+    model = genai.GenerativeModel(model_list[current_model_idx])
 
     kb_path = Path(args.kb)
     if not kb_path.exists():
@@ -729,13 +766,27 @@ def main():
             return True
         return False
 
+    def is_config_or_dto(func, parent_class):
+        """Extended filter: skip Configuration/Application classes AND DTO/getter patterns."""
+        cname = func.get("class_name", "")
+        crole = parent_class.get("class_role") or func.get("class_role")
+
+        # Skip @Configuration classes — Mockito cannot stub framework internals like HttpSecurity
+        if crole == "CONFIGURATION":
+            return True
+        # Skip classes whose names end with Config or Application (Spring Boot entry points)
+        if cname.endswith("Config") or cname.endswith("Configuration") or cname.endswith("Application"):
+            return True
+
+        return is_dto_or_getter(func, parent_class)
+
     func_nodes = [
         n for n in nodes
         if n.get("type") == "FUNCTION"
         and n.get("file", "").endswith(".java")
         and n.get("class_name")
         and n.get("name") not in SKIP_METHODS
-        and not is_dto_or_getter(n, classes_by_name.get(n.get("class_name"), {}))
+        and not is_config_or_dto(n, classes_by_name.get(n.get("class_name"), {}))
     ]
 
     print(f"Found {len(func_nodes)} testable target functions.")
@@ -783,8 +834,8 @@ def main():
     csv_path = out_base / "test_matrix_summary.csv"
 
     for idx, task in enumerate(test_plan, 1):
-        print(f"\n[{idx}/{len(test_plan)}] Processing {task['class']}.{task['func']}() -> Techniques: {task['techniques']}")
-        
+        print(f"\n[{idx}/{len(test_plan)}] {task['class']}.{task['func']}() -> {task['techniques']}")
+
         for technique in task["techniques"]:
             rel_file = task["out_files"][technique]
             full_file = out_base / rel_file
@@ -795,11 +846,10 @@ def main():
 
             prompt_tmpl = TECHNIQUE_PROMPTS[task["axis"]][technique]
             prompt = prompt_tmpl.format(**task["context"])
-
             full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
 
-            print(f"  -> Generating {technique} test ({rel_file})...")
-            success = False
+            print(f"  -> Generating {technique} ({rel_file})...", flush=True)
+
             for attempt in range(1, 4):
                 try:
                     response = model.generate_content(full_prompt)
@@ -807,24 +857,33 @@ def main():
 
                     full_file.parent.mkdir(parents=True, exist_ok=True)
                     full_file.write_text(java_code, encoding="utf-8")
-                    print(f"  -> Saved: {full_file}")
+                    print(f"  -> Saved: {full_file}", flush=True)
 
                     append_csv(csv_path, task["class"], task["func"], task["axis"], technique, rel_file)
-                    time.sleep(4.2)
-                    success = True
+                    time.sleep(2.0)  # polite 2s pause between successful calls
                     break
                 except Exception as e:
                     err_str = str(e)
-                    if "429" in err_str or "Quota exceeded" in err_str:
-                        print(f"  -> Rate limit hit (attempt {attempt}/3). Sleeping 20s before retry...")
-                        time.sleep(20.0)
+                    if "404" in err_str or "429" in err_str or "Quota exceeded" in err_str:
+                        if current_model_idx + 1 < len(model_list):
+                            current_model_idx += 1
+                            next_model_name = model_list[current_model_idx]
+                            print(f"  -> Switching to fallback model '{next_model_name}'...", flush=True)
+                            model = genai.GenerativeModel(next_model_name)
+                            time.sleep(2.0)
+                            continue
+
+                        wait = 10.0 * attempt
+                        print(f"  -> Rate limit hit (attempt {attempt}/3). Waiting {wait:.0f}s...", flush=True)
+                        time.sleep(wait)
                     else:
-                        print(f"  -> Error generating {technique} for {task['class']}.{task['func']}: {e}")
-                        time.sleep(5.0)
+                        print(f"  -> Error ({technique}) {task['class']}.{task['func']}: {e}", flush=True)
+                        time.sleep(3.0)
                         break
 
     print("\nTester Agent V2 completed successfully!")
     print(f"Outputs written to {out_base}")
+
 
 if __name__ == "__main__":
     main()

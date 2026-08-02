@@ -32,7 +32,10 @@ class KBMerger:
             if node["type"] == "CLASS":
                 annotations = [a.upper() for a in node.get("annotations", [])]
                 ann_str = " ".join(annotations)
-                if "SERVICE" in ann_str:
+                class_name = node.get("name", "")
+                if "CONFIGURATION" in ann_str or class_name.endswith("Config") or class_name.endswith("Configuration"):
+                    node["class_role"] = "CONFIGURATION"
+                elif "SERVICE" in ann_str:
                     node["class_role"] = "SERVICE"
                 elif "REPOSITORY" in ann_str or "MAPPER" in ann_str:
                     node["class_role"] = "REPOSITORY"
@@ -44,6 +47,7 @@ class KBMerger:
                     node["class_role"] = "COMPONENT"
                 else:
                     node["class_role"] = "GENERAL"
+
 
         for node in nodes:
             if node["type"] == "FUNCTION":
