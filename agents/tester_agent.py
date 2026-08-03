@@ -16,20 +16,40 @@ import google.generativeai as genai
 
 load_dotenv()
 
+# Manual Test CSV Headers (14 columns)
+MANUAL_CSV_HEADERS = "Test ID,Module Name,Function Name,Test Type,Test Scenario,Pre Conditions,Test Steps,Test Data,Expected Result,Priority,Executed By,Execution Date,Status,Remarks\n"
+
 # System Prompt
 SYSTEM_PROMPT = """You are a Principal Java QA Automation Engineer specializing in JUnit 5, Mockito, and Spring Boot Test.
 
-RULES:
-1. Output ONLY one valid compilable Java class in a single ```java ... ``` block.
-2. STRICT RETURN TYPE RULE: Every test method MUST use the exact standard Java keyword 'void' as its return type (e.g., 'void testSomething()'). NEVER prepend typos, prefixes, or random characters to 'void' (such as 'wbvoid', 'bvoid', or 'vvoid').
-3. ALWAYS use the EXACT method name provided in the context when calling the class under test. Do NOT invent, abbreviate, or shorten method names.
-4. STRICT CONSTRUCTOR RULE: Use ONLY the exact constructor signatures provided in the prompt context (or no-arg constructor + setters). NEVER invent a constructor with a different number of arguments than listed in CONSTRUCTORS.
-5. Mockito STUB RULE: When stubbing method calls with when(mock.method(any(...))), the type inside any(...) MUST match the method parameter type, OR use plain any(). Never pass a DTO type to any() if the target method expects an Entity or Model type.
-6. Use JUnit 5 (org.junit.jupiter.api.*). NEVER use JUnit 4.
-7. Every @Test MUST have a @DisplayName that reads as a full English sentence.
-8. Write ALL package imports explicitly -- no wildcard imports.
-9. Output Java code only. No explanation text outside the code block.
+OUTPUT FORMAT REQUIREMENTS:
+Your response MUST contain TWO distinct sections:
+
+1. AUTOMATED JUNIT TEST CLASS:
+Output ONLY one valid compilable Java class inside a single ```java ... ``` block.
+
+RULES FOR JAVA CODE:
+- STRICT RETURN TYPE RULE: Every test method MUST use the exact standard Java keyword 'void' as its return type (e.g., 'void testSomething()'). NEVER prepend typos or random characters.
+- ALWAYS use the EXACT method name provided in the context when calling the class under test.
+- STRICT CONSTRUCTOR RULE: Use ONLY the exact constructor signatures provided in the prompt context.
+- Mockito STUB RULE: When stubbing method calls with when(mock.method(any(...))), match parameter types or use plain any().
+- Use JUnit 5 (org.junit.jupiter.api.*). NEVER use JUnit 4.
+- Every @Test MUST have a @DisplayName that reads as a full English sentence.
+- Write ALL package imports explicitly -- no wildcard imports.
+
+2. MANUAL TEST CASES (STRICT CSV FORMAT):
+Output 1-3 manual test cases for human QA testers inside a single ```csv ... ``` or [CSV]...[/CSV] block.
+Output ONLY valid CSV data rows matching the exact 14 headers below. Do NOT output column headers.
+If a field contains commas or newlines, wrap the field value in double quotes.
+Leave the last 4 columns (Executed By, Execution Date, Status, Remarks) empty (e.g., ,,,).
+
+Expected 14 Headers:
+Test ID, Module Name, Function Name, Test Type, Test Scenario, Pre Conditions, Test Steps, Test Data, Expected Result, Priority, Executed By, Execution Date, Status, Remarks
+
+Example CSV row:
+TC_PATIENT_001,PatientService,registerPatient,Unit - Happy Path,"Verify patient registration succeeds with valid input","Database active, Mock initialized","1. Build valid PatientDTO\n2. Call registerPatient()","PatientDTO(name=""John"")","Returns saved Patient object with non-null ID",High,,,,
 """
+
 
 # Prompts
 UNIT_HAPPY_PATH_PROMPT = """You are writing a UNIT HAPPY PATH TEST class for `{class_name}.{func_name}()`.
@@ -706,6 +726,298 @@ def append_csv(csv_path: Path, class_name: str, func_name: str, axis: str, techn
             writer.writerow(header)
         writer.writerow([class_name, func_name, axis, technique, out_file])
 
+def extract_csv_block(text: str) -> str:
+    """Extracts CSV data rows block from Gemini output ([CSV]...[/CSV] or ```csv ... ```)."""
+    block = ""
+    if "[CSV]" in text and "[/CSV]" in text:
+        block = text.split("[CSV]")[1].split("[/CSV]")[0].strip()
+    elif "```csv" in text:
+        block = text.split("```csv")[1].split("```")[0].strip()
+    elif "```CSV" in text:
+        block = text.split("```CSV")[1].split("```")[0].strip()
+    else:
+        # Fallback: look for blocks with commas that are not java code
+        blocks = text.split("```")
+        csv_lines = []
+        for b in blocks:
+            if b.strip().startswith("java"):
+                continue
+            lines = [l.strip() for l in b.strip().splitlines() if l.strip()]
+            if lines and "," in lines[0] and not lines[0].startswith("import") and not lines[0].startswith("package"):
+                csv_lines.extend(lines)
+        block = "\n".join(csv_lines)
+
+    exits = []
+    lines = body.splitlines()
+    for idx, line in enumerate(lines):
+        if "throw new" in line:
+            context = " ".join([lines[i].strip() for i in range(max(0, idx-2), idx+1)])
+            exits.append(context)
+    return exits
+
+def map_exception_triggers(throws_list: list, body: str) -> list[str]:
+    if not body or not throws_list: return []
+    triggers = []
+    for exc in throws_list:
+        exc_clean = exc.split(".")[-1]
+        for line in body.splitlines():
+            if f"throw new {exc_clean}" in line:
+                triggers.append(f"{exc_clean} -> {line.strip()}")
+    return triggers
+
+def parse_http_method(annotations: list) -> str:
+    for ann in annotations:
+        ann_l = ann.lower()
+        if "postmapping" in ann_l: return "post"
+        if "getmapping" in ann_l: return "get"
+        if "putmapping" in ann_l: return "put"
+        if "deletemapping" in ann_l: return "delete"
+    return "post"
+
+def parse_base_url(class_annotations: list) -> str:
+    for ann in class_annotations:
+        if "requestmapping" in ann.lower():
+            m = re.search(r'\(["\']([^"\']+)["\']\)', ann)
+            if m: return m.group(1)
+    return ""
+
+def parse_endpoint_url(annotations: list) -> str:
+    for ann in annotations:
+        if any(x in ann.lower() for x in ["mapping"]):
+            m = re.search(r'\(["\']([^"\']+)["\']\)', ann)
+            if m: return m.group(1)
+    return ""
+
+
+
+def get_applicable_techniques(axis: str, func: dict, ctx: dict, outgoing_calls: list) -> list[str]:
+    techniques = ["happy_path"]
+
+    if axis == "unit":
+        if ctx.get("null_checks") or ctx.get("blank_checks"):
+            techniques.append("negative")
+        if func.get("throws"):
+            techniques.append("exception")
+        if ctx.get("annotation_values_formatted") or ctx.get("boundary_branches"):
+            techniques.append("boundary")
+        if outgoing_calls:
+            techniques.append("mock")
+
+    elif axis == "integration_controller":
+        if ctx.get("null_checks") or ctx.get("blank_checks") or ctx.get("annotation_values_formatted"):
+            techniques.append("negative")
+        if func.get("throws"):
+            techniques.append("exception")
+        if ctx.get("annotation_values_formatted") or ctx.get("boundary_branches"):
+            techniques.append("boundary")
+
+    elif axis == "integration_repository":
+        techniques.append("negative")
+        techniques.append("constraint_violation")
+
+    return techniques
+
+def needs_body(applicable_techniques: list) -> bool:
+    return bool(set(applicable_techniques) & CODE_REQUIRED_TECHNIQUES)
+
+def build_context(func: dict, parent_class: dict, outgoing_calls: list, include_body: bool) -> dict:
+    body_text = func.get("body", "") if include_body else "(not required for these techniques)"
+
+    null_checks        = parse_null_checks(body_text)
+    blank_checks       = parse_blank_checks(body_text)
+    boundary_branches  = parse_branches(body_text)
+    early_exits        = parse_early_exits(body_text)
+    exception_triggers = map_exception_triggers(func.get("throws", []), body_text)
+
+    calls_formatted = "\n".join([
+        f"  {e.get('object','')}.{e.get('target','')}({', '.join(e.get('arguments', []))}) -> {e.get('callee_return_type', 'void')}"
+        for e in outgoing_calls
+    ])
+
+    fields_formatted = "\n".join([
+        f"  {f.get('type','')} {f.get('name','')}" for f in parent_class.get("fields", [])
+    ])
+    constructors_formatted = "\n".join([
+        f"  new {parent_class.get('name', '')}({', '.join(c.get('params', []))})"
+        for c in parent_class.get("constructors", [])
+    ])
+
+    file_path = func.get("file", "")
+    if "src/main/java/" in file_path:
+        package = file_path.split("src/main/java/")[-1].rsplit("/", 1)[0].replace("/", ".")
+    else:
+        package = "com.medibook"
+
+    class_name = func.get("class_name", "UnknownClass")
+    class_name_lower = class_name[0].lower() + class_name[1:] if class_name else "target"
+
+    return {
+        "package":                    package,
+        "class_name":                 class_name,
+        "class_name_lower":           class_name_lower,
+        "class_role":                 func.get("class_role", ""),
+        "class_annotations":          ", ".join(parent_class.get("annotations", [])),
+        "func_name":                  func.get("name", ""),
+        "return_type":                func.get("return_type", ""),
+        "parameters":                 ", ".join(func.get("parameters", [])),
+        "throws_list":                ", ".join(func.get("throws", [])),
+        "annotations":                ", ".join(func.get("annotations", [])),
+        "javadoc":                    func.get("javadoc", ""),
+        "body":                       body_text,
+        "fields_formatted":           fields_formatted or "(none)",
+        "constructors_formatted":     constructors_formatted or f"  new {class_name}()",
+        "calls_formatted":            calls_formatted or "(none)",
+        "annotation_values_formatted": func.get("annotation_values_formatted", "(none)"),
+        "null_checks":                "\n  ".join(null_checks) or "(none detected)",
+        "blank_checks":               "\n  ".join(blank_checks) or "(none detected)",
+        "boundary_branches":          "\n  ".join(boundary_branches) or "(none detected)",
+        "early_exit_conditions":      "\n  ".join(early_exits) or "(none detected)",
+        "exception_trigger_map":      "\n  ".join(exception_triggers) or "(none detected)",
+        "http_method":                parse_http_method(func.get("annotations", [])),
+        "base_url":                   parse_base_url(parent_class.get("annotations", [])),
+        "endpoint_url":               parse_endpoint_url(func.get("annotations", [])),
+    }
+
+def sanitize_java_code(java_code: str) -> str:
+    """Fixes common LLM syntax glitches like missing 'void' return types, typos like 'wbvoid', and mismatched any(Class.class) stubs."""
+    # 1. Clean up typos where LLM or regex artifact created 'wbvoid', 'bvoid', etc.
+    java_code = re.sub(r'\b[a-zA-Z]{1,3}void\b', 'void', java_code)
+
+    # 2. Insert 'void' before test method names if return type was omitted after @Test / @DisplayName
+    # Matches: @Test (optional @DisplayName) followed by an identifier starting a method without a return type
+    pattern_missing_void = r'(@Test\s*(?:\n\s*@DisplayName\([^)]+\))?\s*\n\s*)([a-zA-Z0-9_]+\s*\(\)\s*\{)'
+    def replace_missing_void(match):
+        prefix = match.group(1)
+        method_sig = match.group(2)
+        # If method_sig doesn't start with a known modifier or return type, prepend void
+        if not re.match(r'^(?:public|protected|private|void|static)\b', method_sig):
+            return f"{prefix}void {method_sig}"
+        return match.group(0)
+
+    java_code = re.sub(pattern_missing_void, replace_missing_void, java_code)
+
+    # 3. Replace any(AnyClass.class) in Mockito stubs/verifications with plain any() to eliminate type inference compilation errors
+    pattern_any = r'any\s*\(\s*[A-Za-z0-9_\.]+\.class\s*\)'
+    java_code = re.sub(pattern_any, 'any()', java_code, flags=re.IGNORECASE)
+
+    return java_code
+
+def extract_java_block(text: str) -> str:
+    if "```java" in text:
+        block = text.split("```java")[1].split("```")[0].strip()
+        return sanitize_java_code(block)
+    elif "```" in text:
+        block = text.split("```")[1].split("```")[0].strip()
+        return sanitize_java_code(block)
+    return sanitize_java_code(text.strip())
+
+def append_csv(csv_path: Path, class_name: str, func_name: str, axis: str, technique: str, out_file: str):
+    header = ["ClassName", "FunctionName", "Axis1", "Axis2Technique", "OutputFile"]
+    needs_header = not csv_path.exists()
+    
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if needs_header:
+            writer.writerow(header)
+        writer.writerow([class_name, func_name, axis, technique, out_file])
+
+def extract_csv_block(text: str) -> str:
+    """Extracts CSV data rows block from Gemini output ([CSV]...[/CSV] or ```csv ... ```)."""
+    block = ""
+    if "[CSV]" in text and "[/CSV]" in text:
+        block = text.split("[CSV]")[1].split("[/CSV]")[0].strip()
+    elif "```csv" in text:
+        block = text.split("```csv")[1].split("```")[0].strip()
+    elif "```CSV" in text:
+        block = text.split("```CSV")[1].split("```")[0].strip()
+    else:
+        # Fallback: look for blocks with commas that are not java code
+        blocks = text.split("```")
+        csv_lines = []
+        for b in blocks:
+            if b.strip().startswith("java"):
+                continue
+            lines = [l.strip() for l in b.strip().splitlines() if l.strip()]
+            if lines and "," in lines[0] and not lines[0].startswith("import") and not lines[0].startswith("package"):
+                csv_lines.extend(lines)
+        block = "\n".join(csv_lines)
+
+    if block.startswith("```csv"): block = block[6:]
+    if block.startswith("```"): block = block[3:]
+    if block.endswith("```"): block = block[:-3]
+    return block.strip()
+
+MANUAL_HEADERS = ["Test ID", "Module Name", "Function Name", "Test Type", "Test Scenario",
+                  "Pre Conditions", "Test Steps", "Test Data", "Expected Result", "Priority",
+                  "Executed By", "Execution Date", "Status", "Remarks"]
+
+def append_manual_excel(excel_path: Path, csv_rows_str: str, sheet_title: str = "Manual Tests"):
+    """Appends manual test cases directly into a professionally styled Excel (.xlsx) file."""
+    if not csv_rows_str or not csv_rows_str.strip():
+        return
+
+    import io
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        excel_path.parent.mkdir(parents=True, exist_ok=True)
+
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'),
+            right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'),
+            bottom=Side(style='thin', color='D9D9D9')
+        )
+        alignment_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        alignment_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+        if excel_path.exists():
+            wb = openpyxl.load_workbook(excel_path)
+            ws = wb.active
+        else:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = sheet_title[:31]
+            ws.views.sheetView[0].showGridLines = True
+            ws.append(MANUAL_HEADERS)
+            for cell in ws[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = alignment_center
+
+        reader = list(csv.reader(io.StringIO(csv_rows_str.strip())))
+        for r in reader:
+            if not r or all(not str(c).strip() for c in r):
+                continue
+            ws.append(r)
+            current_row = ws.max_row
+            for col_num, cell in enumerate(ws[current_row], 1):
+                cell.border = thin_border
+                if col_num in [1, 4, 10, 11, 12, 13]:
+                    cell.alignment = alignment_center
+                else:
+                    cell.alignment = alignment_left
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                val_str = str(cell.value or '')
+                lines = val_str.split('\n')
+                for line in lines:
+                    if len(line) > max_len:
+                        max_len = len(line)
+            ws.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 50)
+
+        wb.save(excel_path)
+    except Exception as e:
+        print(f"  -> Excel save note ({e}) for {excel_path.name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Tester Agent V2")
     parser.add_argument('--repo', default='Lavanya-2402/Medibook', help="Repo owner/name")
@@ -721,9 +1033,7 @@ def main():
 
     genai.configure(api_key=gemini_key, transport='rest')
 
-    # Fallback model list if daily quota is reached on primary model
     FALLBACK_MODELS = [args.model, 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001', 'gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-pro-latest']
-    # Deduplicate preserving order
     model_list = list(dict.fromkeys(FALLBACK_MODELS))
     current_model_idx = 0
     model = genai.GenerativeModel(model_list[current_model_idx])
@@ -767,17 +1077,12 @@ def main():
         return False
 
     def is_config_or_dto(func, parent_class):
-        """Extended filter: skip Configuration/Application classes AND DTO/getter patterns."""
         cname = func.get("class_name", "")
         crole = parent_class.get("class_role") or func.get("class_role")
-
-        # Skip @Configuration classes — Mockito cannot stub framework internals like HttpSecurity
         if crole == "CONFIGURATION":
             return True
-        # Skip classes whose names end with Config or Application (Spring Boot entry points)
         if cname.endswith("Config") or cname.endswith("Configuration") or cname.endswith("Application"):
             return True
-
         return is_dto_or_getter(func, parent_class)
 
     func_nodes = [
@@ -811,7 +1116,7 @@ def main():
         suffixes = FILE_SUFFIX[axis]
 
         out_files = {
-            t: str(Path("tests") / axis_short / t / f"{func.get('class_name')}{suffixes[t]}.java")
+            t: str(Path("automated") / axis_short / t / f"{func.get('class_name')}{suffixes[t]}.java")
             for t in applicable
         }
 
@@ -835,6 +1140,7 @@ def main():
 
     for idx, task in enumerate(test_plan, 1):
         print(f"\n[{idx}/{len(test_plan)}] {task['class']}.{task['func']}() -> {task['techniques']}")
+        axis_short = "unit" if task["axis"] == "unit" else "integration"
 
         for technique in task["techniques"]:
             rel_file = task["out_files"][technique]
@@ -850,17 +1156,29 @@ def main():
 
             print(f"  -> Generating {technique} ({rel_file})...", flush=True)
 
+            success = False
             for attempt in range(1, 4):
                 try:
                     response = model.generate_content(full_prompt)
                     java_code = extract_java_block(response.text)
+                    csv_rows = extract_csv_block(response.text)
 
                     full_file.parent.mkdir(parents=True, exist_ok=True)
                     full_file.write_text(java_code, encoding="utf-8")
-                    print(f"  -> Saved: {full_file}", flush=True)
+                    print(f"  -> Saved automated code: {full_file}", flush=True)
 
                     append_csv(csv_path, task["class"], task["func"], task["axis"], technique, rel_file)
-                    time.sleep(2.0)  # polite 2s pause between successful calls
+
+                    if csv_rows:
+                        tech_excel_path = out_base / "manual" / f"{axis_short}_{technique}.xlsx"
+                        master_excel_path = out_base / "manual" / "manual_test_cases_master.xlsx"
+                        sheet_title = f"{axis_short}_{technique}".replace("_", " ").title()
+                        append_manual_excel(tech_excel_path, csv_rows, sheet_title)
+                        append_manual_excel(master_excel_path, csv_rows, "Master Manual Tests")
+                        print(f"  -> Appended manual test cases: {tech_excel_path.name}", flush=True)
+
+                    time.sleep(2.0)
+                    success = True
                     break
                 except Exception as e:
                     err_str = str(e)
@@ -880,6 +1198,15 @@ def main():
                         print(f"  -> Error ({technique}) {task['class']}.{task['func']}: {e}", flush=True)
                         time.sleep(3.0)
                         break
+
+    # Clean up any residual .csv files in manual folder so only .xlsx Excel files remain
+    manual_dir = out_base / "manual"
+    if manual_dir.exists():
+        for old_csv in manual_dir.glob("*.csv"):
+            try:
+                old_csv.unlink()
+            except Exception:
+                pass
 
     print("\nTester Agent V2 completed successfully!")
     print(f"Outputs written to {out_base}")
