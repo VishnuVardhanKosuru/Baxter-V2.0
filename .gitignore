@@ -4,20 +4,30 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
 venv/
+.venv/
+env/
 
-# Output
-output/
-
-# Node / Frontend
-node_modules/
-frontend/dist/
+# Frontend dependencies
 frontend/node_modules/
+node_modules/
 
-# IDE
+# Build outputs
+frontend/build/
+frontend/dist/
+dist/
+build/
+
+# IDE / OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 
-# Misc logs & generated files
-conversation_history.jsonl
-repo_structure.txt
+# Logs
+*.log
+npm-debug.log*
