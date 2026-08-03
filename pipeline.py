@@ -74,7 +74,11 @@ def main():
         
     tester_result = subprocess.run(tester_cmd, env=env)
 
-    # 6. Update State
+    # 6. Run Jira Integration Agent
+    print("\n=== Phase 3: Running Jira Integration Agent ===")
+    jira_result = subprocess.run([sys.executable, "push_to_jira.py"], env=env)
+
+    # 7. Update State
     with open(state_file, "w") as f:
         json.dump({"last_commit_sha": latest_sha}, f)
     

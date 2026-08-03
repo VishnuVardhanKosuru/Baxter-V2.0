@@ -4,7 +4,7 @@ import { Ticket, CheckCircle, Copy, ExternalLink } from 'lucide-react';
 export default function JiraView({ metrics = {} }) {
   const [copied, setCopied] = useState(false);
 
-  const jiraUrl = metrics.jira_project_url || "https://your-domain.atlassian.net/projects/KEY/issues";
+  const jiraUrl = metrics.jira_project_url || "https://sreejabiswas2.atlassian.net/browse/SCRUM";
   const bugsPushed = metrics.bugs_pushed || 0;
   const syncStatus = metrics.jira_status || (bugsPushed > 0 ? "Synced" : "Waiting...");
 

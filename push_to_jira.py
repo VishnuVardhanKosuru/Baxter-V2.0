@@ -1,6 +1,7 @@
 import os
 import sys
 import glob
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -20,43 +21,64 @@ def main():
         print(f"Project Key: {jira.project_key}")
         sys.exit(1)
         
-    print(f"Pushing to Jira Project: {jira.project_key} at {jira.url}")
-    print("NOTE: If you get a 'target project doesn't exist' error, your JIRA_PROJECT_KEY in .env is incorrect.")
+    print(f"[Jira Sync] Connecting to Project: {jira.project_key} at {jira.url}")
     
-    # Find all generated manual test CSVs
-    csv_files = glob.glob("output/*/tests/manual/*_tests_master.csv")
+    target_status = os.getenv("JIRA_FEATURE_STATUS", "In Progress")
     
-    if not csv_files:
-        print("No generated CSV test cases found in output/*/tests/manual/")
-        sys.exit(0)
-        
+    # 1. Search for output test plans
+    plan_files = glob.glob("output/*/test_plan.json")
+    
     count = 0
-    for csv_file in csv_files:
-        print(f"\nProcessing {csv_file}...")
-        with open(csv_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            
-            # Skip header
-            if lines and lines[0].startswith("Test ID"):
-                lines = lines[1:]
-                
-            for row in lines:
-                row = row.strip()
-                if not row:
-                    continue
+    if plan_files:
+        for plan_file in plan_files:
+            print(f"\nProcessing {plan_file}...")
+            try:
+                with open(plan_file, "r", encoding="utf-8") as f:
+                    tasks = json.load(f)
                     
-                parts = row.split(",")
-                if len(parts) >= 9:
-                    test_id, module, func_name, test_type, scenario, pre_cond, steps, data, expected = parts[:9]
-                    summary = f"[{test_id}] {func_name} - {scenario}"
-                    desc = f"Module: {module}\nPre-conditions: {pre_cond}\nSteps:\n{steps}\nTest Data: {data}\nExpected Result: {expected}"
+                for t in tasks:
+                    cls = t.get("class", "TestClass")
+                    func = t.get("func", "testMethod")
+                    axis = t.get("axis", "unit")
+                    techniques = t.get("techniques", [])
                     
-                    # Push to Jira as Bug
-                    issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Bug")
+                    summary = f"[{cls}] {func}() - {axis.upper()} Test Suite"
+                    desc = f"Class: {cls}\nFunction: {func}\nAxis: {axis}\nTechniques: {', '.join(techniques)}"
+                    
+                    issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Feature", status=target_status)
+                    if not issue_key:
+                        issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Story", status=target_status)
+                    if not issue_key:
+                        issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Task", status=target_status)
                     if issue_key:
                         count += 1
-                        
-    print(f"\nSuccessfully pushed {count} issues to Jira!")
+            except Exception as e:
+                print(f"Error processing {plan_file}: {e}")
+    else:
+        # Fallback to test_matrix_summary.csv
+        csv_files = glob.glob("output/*/test_matrix_summary.csv")
+        for csv_file in csv_files:
+            print(f"\nProcessing {csv_file}...")
+            try:
+                with open(csv_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    for line in lines[1:]:
+                        parts = line.strip().split(",")
+                        if len(parts) >= 4:
+                            cls, func, axis, tech = parts[:4]
+                            summary = f"[{cls}] {func} - {tech}"
+                            desc = f"Class: {cls}\nFunction: {func}\nAxis: {axis}\nTechnique: {tech}"
+                            issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Feature", status=target_status)
+                            if not issue_key:
+                                issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Story", status=target_status)
+                            if not issue_key:
+                                issue_key = jira.create_issue(summary=summary, description=desc, issue_type="Task", status=target_status)
+                            if issue_key:
+                                count += 1
+            except Exception as e:
+                print(f"Error processing {csv_file}: {e}")
+
+    print(f"\n[Jira Sync] Successfully pushed {count} test issues to Jira Project {jira.project_key}!")
 
 if __name__ == "__main__":
     main()

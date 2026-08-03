@@ -488,7 +488,7 @@ def load_kb_metrics(repo: str = "") -> dict:
             "total_files": total_files,
             "bugs_pushed": unit_total + integration_total,
             "jira_status": "Synced" if (unit_total + integration_total > 0) else "Waiting...",
-            "jira_project_url": os.getenv("JIRA_PROJECT_URL", "https://your-domain.atlassian.net/projects/KEY/issues")
+            "jira_project_url": os.getenv("JIRA_PROJECT_URL", f"{os.getenv('JIRA_URL', 'https://sreejabiswas2.atlassian.net')}/browse/{os.getenv('JIRA_PROJECT_KEY', 'SCRUM')}")
         }
     except Exception as e:
         print(f"Error parsing kb.json: {e}")
@@ -550,13 +550,16 @@ async def message_stream(request: Request):
         finally:
             listeners.remove(q)
             
+    return EventSourceResponse(event_generator())
+
 @app.get("/api/jira-status")
 async def get_jira_status(repo: str = ""):
     metrics = load_kb_metrics(repo)
+    default_url = f"{os.getenv('JIRA_URL', 'https://sreejabiswas2.atlassian.net')}/browse/{os.getenv('JIRA_PROJECT_KEY', 'SCRUM')}"
     return {
         "bugs_pushed": metrics.get("bugs_pushed", 0),
         "sync_status": metrics.get("jira_status", "Waiting..."),
-        "jira_project_url": metrics.get("jira_project_url", "https://your-domain.atlassian.net/projects/KEY/issues")
+        "jira_project_url": metrics.get("jira_project_url", default_url)
     }
 
 @app.post("/api/jira-sync")

@@ -1025,6 +1025,8 @@ def main():
     parser.add_argument('--out-dir', default='', help="Output directory")
     parser.add_argument('--model', default='gemini-2.0-flash-lite', help="Gemini model name")
     parser.add_argument('--changed-files', default='', help="Comma-separated list of changed files for delta testing")
+    args = parser.parse_args()
+
     raw_key = os.getenv("GEMINI_API_KEY", "")
     api_keys = [k.strip() for k in raw_key.split(",") if k.strip()]
     if not api_keys:
