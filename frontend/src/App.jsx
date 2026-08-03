@@ -93,13 +93,13 @@ function App() {
             className={`tab ${activeTab === 'scanner' ? 'active' : ''}`}
             onClick={() => setActiveTab('scanner')}
           >
-            <Search size={16} /> E2E Test Case Generator
+            <Search size={16} /> Scanner Agent
           </button>
           <button 
             className={`tab ${activeTab === 'tester' ? 'active' : ''}`}
             onClick={() => setActiveTab('tester')}
           >
-            <TestTube size={16} /> Test Generator
+            <TestTube size={16} /> Test Generator Agent
           </button>
           <button 
             className={`tab ${activeTab === 'jira' ? 'active' : ''}`}
