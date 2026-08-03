@@ -4,25 +4,22 @@ import PipelineTracker from './components/PipelineTracker';
 import ScannerView from './components/ScannerView';
 import TesterView from './components/TesterView';
 import JiraView from './components/JiraView';
+import { Search, TestTube, Share2 } from 'lucide-react';
 
 function App() {
-  const [repo, setRepo] = useState('supriya-daita/LibraryManagementSystem');
-  const [currentStep, setCurrentStep] = useState(0);
+  const [repo, setRepo] = useState('');
+  const [currentStep, setCurrentStep] = useState(0); // 0 = Fresh/Idle state on refresh
   const [activeTab, setActiveTab] = useState('scanner');
   const [isRunning, setIsRunning] = useState(false);
-  const [theme, setTheme] = useState('dark');
-  
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-  
-  const toggleTheme = () => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
-  };
+  const [elapsedTime, setElapsedTime] = useState('0s');
   
   const [metrics, setMetrics] = useState({
     files_scanned: 0,
+    lines_analyzed: 0,
     functions_found: 0,
+    classes: 0,
+    modules_packages: 0,
+    test_cases_generated: 0,
     graph_nodes: 0,
     graph_edges: 0,
     security_vulns: 0,
@@ -39,13 +36,11 @@ function App() {
 
     eventSource.addEventListener('state_update', (event) => {
       const state = JSON.parse(event.data);
-      setCurrentStep(state.currentStep);
-      setIsRunning(state.isRunning);
-      setMetrics(state.metrics);
-    });
-
-    eventSource.addEventListener('log_update', (event) => {
-      // Logs are just printed on python console, but we could hook them here if desired.
+      if (state.currentStep !== undefined) setCurrentStep(state.currentStep);
+      if (state.isRunning !== undefined) setIsRunning(state.isRunning);
+      if (state.elapsed_time !== undefined) setElapsedTime(state.elapsed_time);
+      if (state.repo_name) setRepo(state.repo_name);
+      if (state.metrics) setMetrics(prev => ({ ...prev, ...state.metrics }));
     });
 
     return () => {
@@ -53,12 +48,22 @@ function App() {
     };
   }, []);
 
+  const sanitizeRepoInput = (raw) => {
+    if (!raw) return '';
+    let clean = raw.trim();
+    clean = clean.replace(/^https?:\/\/github\.com\//i, '');
+    clean = clean.replace(/\.git$/i, '');
+    clean = clean.replace(/\/$/, '');
+    return clean;
+  };
+
   const runPipeline = async () => {
+    const cleanRepo = sanitizeRepoInput(repo);
     try {
       const response = await fetch('http://localhost:8000/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo })
+        body: JSON.stringify({ repo: cleanRepo })
       });
       const data = await response.json();
       if (data.status === 'ok') {
@@ -67,7 +72,7 @@ function App() {
         alert(data.message);
       }
     } catch (e) {
-      alert("Failed to connect to backend api at http://localhost:8000");
+      alert("Failed to connect to backend API at http://localhost:8000");
     }
   };
 
@@ -76,12 +81,11 @@ function App() {
       <Header 
         repo={repo} 
         setRepo={setRepo} 
-        onRun={runPipeline} 
+        onRun={runPipeline}
         isRunning={isRunning} 
-        theme={theme} 
-        onToggleTheme={toggleTheme} 
       />
-      <PipelineTracker currentStep={currentStep} />
+
+      <PipelineTracker currentStep={currentStep} elapsedTime={elapsedTime} />
       
       <div>
         <div className="tabs">
@@ -89,23 +93,23 @@ function App() {
             className={`tab ${activeTab === 'scanner' ? 'active' : ''}`}
             onClick={() => setActiveTab('scanner')}
           >
-            Scanner View
+            <Search size={16} /> Test Generator Agent
           </button>
           <button 
             className={`tab ${activeTab === 'tester' ? 'active' : ''}`}
             onClick={() => setActiveTab('tester')}
           >
-            Tester View
+            <TestTube size={16} /> Test Generator
           </button>
           <button 
             className={`tab ${activeTab === 'jira' ? 'active' : ''}`}
             onClick={() => setActiveTab('jira')}
           >
-            Jira Integration
+            <Share2 size={16} /> Jira Integration
           </button>
         </div>
 
-        {activeTab === 'scanner' && <ScannerView repo={repo} metrics={metrics} />}
+        {activeTab === 'scanner' && <ScannerView repo={repo} metrics={metrics} currentStep={currentStep} />}
         {activeTab === 'tester' && <TesterView repo={repo} metrics={metrics} />}
         {activeTab === 'jira' && <JiraView metrics={metrics} />}
       </div>
