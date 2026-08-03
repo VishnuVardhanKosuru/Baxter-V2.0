@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import argparse
 import subprocess
@@ -58,14 +59,14 @@ def main():
     print("\n=== Phase 1: Running Scanner Agent ===")
     env = os.environ.copy()
     env["PYTHONPATH"] = "."
-    scan_result = subprocess.run(["python", "agents/scanner_agent.py", "--repo", args.repo], env=env)
+    scan_result = subprocess.run([sys.executable, "agents/scanner_agent.py", "--repo", args.repo], env=env)
     if scan_result.returncode != 0:
         print("Scanner agent failed. Aborting pipeline.")
         return
 
     # 5. Run Tester Agent
     print("\n=== Phase 2: Running Tester Agent ===")
-    tester_cmd = ["python", "agents/tester_agent.py", "--repo", args.repo]
+    tester_cmd = [sys.executable, "agents/tester_agent.py", "--repo", args.repo]
     if is_delta:
         if not changed_files:
             print("No source files changed. Skipping Tester phase.")

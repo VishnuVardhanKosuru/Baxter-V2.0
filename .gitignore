@@ -1,5 +1,7 @@
+# Environment & Secrets
 .env
-output/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
