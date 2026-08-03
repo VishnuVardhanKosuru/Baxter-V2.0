@@ -21,7 +21,7 @@ export default function Header({
           <GithubIcon size={22} color="white" />
         </div>
         <div className="repo-header-info">
-          <span className="repo-name-text">Test Case Generator Agent</span>
+          <span className="repo-name-text">E2E Test Case Generator</span>
         </div>
       </div>
 
