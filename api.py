@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import time
 import io
 import zipfile
@@ -109,10 +110,14 @@ def parse_log_line(line: str):
     elif "Generating" in line or "Saved automated code" in line:
         pipeline_state["currentStep"] = 5  # Test Generation
         updated = True
-    elif "[Jira]" in line or "Jira Integration" in line:
+    elif "[Jira Sync]" in line or "Jira Integration" in line:
         if pipeline_state["currentStep"] < 6:
             pipeline_state["currentStep"] = 6
-        pipeline_state["metrics"]["jira_tests_created"] += 1
+        # Parse the actual count from the Jira summary line:
+        # e.g. "[Jira Sync] Successfully pushed 13 test issues to Jira Project SCRUM!"
+        match = re.search(r'pushed\s+(\d+)\s+test issues', line)
+        if match:
+            pipeline_state["metrics"]["jira_tests_created"] = int(match.group(1))
         updated = True
     elif "[SUCCESS] Pipeline Complete" in line:
         pipeline_state["currentStep"] = 7  # Complete
@@ -486,8 +491,8 @@ def load_kb_metrics(repo: str = "") -> dict:
             "integration_security": integration_security,
             "test_cases_generated": unit_total + integration_total,
             "total_files": total_files,
-            "bugs_pushed": unit_total + integration_total,
-            "jira_status": "Synced" if (unit_total + integration_total > 0) else "Waiting...",
+            "bugs_pushed": pipeline_state["metrics"].get("jira_tests_created", 0),
+            "jira_status": "Synced" if pipeline_state["metrics"].get("jira_tests_created", 0) > 0 else "Waiting...",
             "jira_project_url": os.getenv("JIRA_PROJECT_URL", f"{os.getenv('JIRA_URL', 'https://sreejabiswas2.atlassian.net')}/browse/{os.getenv('JIRA_PROJECT_KEY', 'SCRUM')}")
         }
     except Exception as e:
