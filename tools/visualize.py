@@ -9,7 +9,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <title>Knowledge Graph</title>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js" crossorigin="anonymous"></script>
     <style type="text/css">
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; overflow: hidden; font-family: sans-serif; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #ffffff; overflow: hidden; font-family: sans-serif; }
         #mynetwork { width: 100%; height: 100%; }
     </style>
 </head>
@@ -51,7 +51,7 @@ XXX_EDGES_XXX
       },
       edges: {
         smooth: { type: "cubicBezier", forceDirection: "none", roundness: 0.4 },
-        color: { color: "#666666", highlight: "#ffffff" },
+        color: { color: "#000000", highlight: "#444444" },
         width: 1.5,
         arrows: { to: { enabled: true, scaleFactor: 0.5 } }
       },
@@ -138,7 +138,7 @@ def main():
             "shape": shape,
             "size": size,
             "borderWidth": border_width,
-            "font": {"size": font_size, "color": "white"}
+            "font": {"size": font_size, "color": "#333333"}
         })
 
     vis_edges = []

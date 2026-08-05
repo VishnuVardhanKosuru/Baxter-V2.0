@@ -14,9 +14,6 @@ from core.artifact_downloader import ArtifactDownloader
 from core.kb_merger import KBMerger
 from tools.get_repo_structure import build_tree_string
 
-# Set your default repository here
-TARGET_REPO = "Lavanya-2402/Medibook"
-
 def load_env():
     """Load variables from .env file into os.environ"""
     env_path = Path(".env")
@@ -29,17 +26,23 @@ def load_env():
                     os.environ[key.strip()] = val.strip()
 
 def main():
+    # Load .env file first
+    load_env()
+
     parser = argparse.ArgumentParser(description="Code Knowledge Base Scanner")
-    parser.add_argument("--repo", default=TARGET_REPO, help="Target repository (owner/repo)")
+    parser.add_argument("--repo", help="Target repository (owner/repo). Defaults to GITHUB_REPO env var.")
     parser.add_argument("--pat", help="GitHub Personal Access Token (defaults to GITHUB_PAT env var)")
     parser.add_argument("--language", help="CodeQL language to scan (comma separated). Leave empty for auto-detect.")
     parser.add_argument("--output", default="output", help="Output directory")
     
     args = parser.parse_args()
     
-    # Load .env file if it exists
-    load_env()
-    
+    repo_input = args.repo or os.environ.get("GITHUB_REPO")
+    if not repo_input:
+        print("Error: Repository is required. Pass via --repo or set GITHUB_REPO env var.")
+        sys.exit(1)
+    args.repo = repo_input
+
     pat = args.pat or os.environ.get("GITHUB_PAT")
     if not pat:
         print("Error: GitHub PAT is required. Pass via --pat or GITHUB_PAT env var.")

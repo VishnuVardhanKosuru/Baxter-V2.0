@@ -1020,25 +1020,44 @@ def append_manual_excel(excel_path: Path, csv_rows_str: str, sheet_title: str = 
 
 def main():
     parser = argparse.ArgumentParser(description="Tester Agent V2")
-    parser.add_argument('--repo', default='Lavanya-2402/Medibook', help="Repo owner/name")
-    parser.add_argument('--kb', default=r'output\Medibook\kb.json', help="Path to kb.json")
+    parser.add_argument('--repo', default='', help="Repo owner/name")
+    parser.add_argument('--kb', default='', help="Path to kb.json")
     parser.add_argument('--out-dir', default='', help="Output directory")
-    parser.add_argument('--model', default='gemini-2.0-flash', help="Gemini model name")
+    parser.add_argument('--model', default='gemini-2.0-flash-lite', help="Gemini model name")
+    parser.add_argument('--changed-files', default='', help="Comma-separated list of changed files for delta testing")
     args = parser.parse_args()
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
+    raw_key = os.getenv("GEMINI_API_KEY", "")
+    api_keys = [k.strip() for k in raw_key.split(",") if k.strip()]
+    if not api_keys:
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    genai.configure(api_key=gemini_key, transport='rest')
+    # High-quota multi-model pool matching Google AI Studio dashboard
+    model_pool = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-3.6-flash',
+        'gemini-3-flash',
+        'gemini-2.5-flash'
+    ]
+    if args.model and args.model not in model_pool:
+        model_pool.insert(0, args.model)
 
-    FALLBACK_MODELS = [args.model, 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001', 'gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-pro-latest']
-    model_list = list(dict.fromkeys(FALLBACK_MODELS))
-    current_model_idx = 0
-    model = genai.GenerativeModel(model_list[current_model_idx])
+    call_counter = 0
 
-    kb_path = Path(args.kb)
+    repo = args.repo.strip() or os.getenv("GITHUB_REPO", "").strip()
+    repo_name = repo.split('/')[-1] if "/" in repo else repo
+
+    if args.kb:
+        kb_path = Path(args.kb)
+    elif repo_name:
+        kb_path = Path("output") / repo_name / "kb.json"
+    else:
+        kb_path = Path("output") / "kb.json"
+
     if not kb_path.exists():
         print(f"Error: kb.json not found at {kb_path}")
         sys.exit(1)
@@ -1050,11 +1069,12 @@ def main():
     nodes = kb_data.get("nodes", [])
     edges = kb_data.get("edges", [])
 
-    repo_name = args.repo.split('/')[-1]
     if args.out_dir:
         out_base = Path(args.out_dir)
-    else:
+    elif repo_name:
         out_base = Path("output") / repo_name
+    else:
+        out_base = Path("output")
 
     out_base.mkdir(parents=True, exist_ok=True)
 
@@ -1150,11 +1170,18 @@ def main():
                 print(f"  [SKIP] {rel_file} already exists.")
                 continue
 
+            call_counter += 1
+            cur_key = api_keys[call_counter % len(api_keys)]
+            cur_model_name = model_pool[call_counter % len(model_pool)]
+
+            genai.configure(api_key=cur_key, transport='rest')
+            model = genai.GenerativeModel(cur_model_name)
+
             prompt_tmpl = TECHNIQUE_PROMPTS[task["axis"]][technique]
             prompt = prompt_tmpl.format(**task["context"])
             full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
 
-            print(f"  -> Generating {technique} ({rel_file})...", flush=True)
+            print(f"  -> Generating {technique} [{cur_model_name}] ({rel_file})...", flush=True)
 
             success = False
             for attempt in range(1, 4):
@@ -1177,26 +1204,20 @@ def main():
                         append_manual_excel(master_excel_path, csv_rows, "Master Manual Tests")
                         print(f"  -> Appended manual test cases: {tech_excel_path.name}", flush=True)
 
-                    time.sleep(2.0)
+                    time.sleep(0.3)
                     success = True
                     break
                 except Exception as e:
                     err_str = str(e)
                     if "404" in err_str or "429" in err_str or "Quota exceeded" in err_str:
-                        if current_model_idx + 1 < len(model_list):
-                            current_model_idx += 1
-                            next_model_name = model_list[current_model_idx]
-                            print(f"  -> Switching to fallback model '{next_model_name}'...", flush=True)
-                            model = genai.GenerativeModel(next_model_name)
-                            time.sleep(2.0)
-                            continue
-
-                        wait = 10.0 * attempt
-                        print(f"  -> Rate limit hit (attempt {attempt}/3). Waiting {wait:.0f}s...", flush=True)
-                        time.sleep(wait)
+                        cur_model_name = model_pool[(call_counter + attempt) % len(model_pool)]
+                        print(f"  -> Rate limit hit (attempt {attempt}/3). Switching model to '{cur_model_name}'...", flush=True)
+                        model = genai.GenerativeModel(cur_model_name)
+                        time.sleep(1.0)
+                        continue
                     else:
                         print(f"  -> Error ({technique}) {task['class']}.{task['func']}: {e}", flush=True)
-                        time.sleep(3.0)
+                        time.sleep(0.5)
                         break
 
     # Clean up any residual .csv files in manual folder so only .xlsx Excel files remain
