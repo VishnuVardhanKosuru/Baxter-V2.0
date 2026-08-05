@@ -76,7 +76,8 @@ def main():
 
     # 6. Run Jira Integration Agent
     print("\n=== Phase 3: Running Jira Integration Agent ===")
-    jira_result = subprocess.run([sys.executable, "push_to_jira.py"], env=env)
+    jira_result = subprocess.run([sys.executable, "push_to_jira.py", "--repo", args.repo], env=env)
+
 
     # 7. Update State
     with open(state_file, "w") as f:

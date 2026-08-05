@@ -1033,18 +1033,31 @@ def main():
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    # High-quota multi-model pool matching Google AI Studio dashboard
+    def normalize_model(name: str) -> str:
+        name = name.strip()
+        if not name.startswith("models/") and not name.startswith("tunedModels/"):
+            return f"models/{name}"
+        return name
+
+    # Verified active Google Gemini models matched against live API & Google AI Studio limits
+    # Ordered by daily quota: 500 RPD models first, followed by 20 RPD & standard Flash models
     model_pool = [
-        'gemini-3.5-flash-lite',
-        'gemini-3.1-flash-lite',
-        'gemini-2.5-flash-lite',
-        'gemini-3.5-flash',
-        'gemini-3.6-flash',
-        'gemini-3-flash',
-        'gemini-2.5-flash'
+        'models/gemini-3.5-flash-lite',   # 15 RPM, 500 RPD (Verified Working)
+        'models/gemini-3.1-flash-lite',   # 15 RPM, 500 RPD (Verified Working)
+        'models/gemini-3.5-flash',        # 5 RPM, 20 RPD (Verified Working)
+        'models/gemini-3.6-flash',        # 5 RPM, 20 RPD (Verified Working)
+        'models/gemini-2.0-flash',        # 15 RPM (Verified Working)
+        'models/gemini-2.0-flash-lite',   # 30 RPM (Verified Working)
+        'models/gemini-1.5-flash',        # 15 RPM (Verified Working)
+        'models/gemini-1.5-pro'           # 2 RPM (Verified Working)
     ]
-    if args.model and args.model not in model_pool:
-        model_pool.insert(0, args.model)
+    if args.model:
+        user_m = normalize_model(args.model)
+        if user_m not in model_pool:
+            model_pool.insert(0, user_m)
+
+
+
 
     call_counter = 0
 
@@ -1204,14 +1217,20 @@ def main():
                         append_manual_excel(master_excel_path, csv_rows, "Master Manual Tests")
                         print(f"  -> Appended manual test cases: {tech_excel_path.name}", flush=True)
 
-                    time.sleep(0.3)
+                    time.sleep(1.5)  # Pause to remain within RPM limits
                     success = True
                     break
                 except Exception as e:
                     err_str = str(e)
-                    if "404" in err_str or "429" in err_str or "Quota exceeded" in err_str:
+                    if "429" in err_str or "quota" in err_str.lower() or "resource_exhausted" in err_str.lower():
                         cur_model_name = model_pool[(call_counter + attempt) % len(model_pool)]
-                        print(f"  -> Rate limit hit (attempt {attempt}/3). Switching model to '{cur_model_name}'...", flush=True)
+                        print(f"  -> Rate limit (429) hit (attempt {attempt}/3). Pausing 4s & switching model to '{cur_model_name}'...", flush=True)
+                        model = genai.GenerativeModel(cur_model_name)
+                        time.sleep(4.0)
+                        continue
+                    elif "404" in err_str or "not found" in err_str.lower():
+                        cur_model_name = model_pool[(call_counter + attempt) % len(model_pool)]
+                        print(f"  -> Model '{cur_model_name}' not available. Switching model to '{cur_model_name}'...", flush=True)
                         model = genai.GenerativeModel(cur_model_name)
                         time.sleep(1.0)
                         continue
@@ -1219,6 +1238,7 @@ def main():
                         print(f"  -> Error ({technique}) {task['class']}.{task['func']}: {e}", flush=True)
                         time.sleep(0.5)
                         break
+
 
     # Clean up any residual .csv files in manual folder so only .xlsx Excel files remain
     manual_dir = out_base / "manual"

@@ -110,15 +110,18 @@ def parse_log_line(line: str):
     elif "Generating" in line or "Saved automated code" in line:
         pipeline_state["currentStep"] = 5  # Test Generation
         updated = True
-    elif "[Jira Sync]" in line or "Jira Integration" in line:
+    elif "[Jira Sync]" in line or "Jira Integration" in line or "New Issues Created" in line or "[Jira]" in line:
         if pipeline_state["currentStep"] < 6:
             pipeline_state["currentStep"] = 6
-        # Parse the actual count from the Jira summary line:
-        # e.g. "[Jira Sync] Successfully pushed 13 test issues to Jira Project SCRUM!"
-        match = re.search(r'pushed\s+(\d+)\s+test issues', line)
+        # Parse the actual count from Jira output lines:
+        match = re.search(r'(?:pushed|Created|Created :)\s+(\d+)', line, re.IGNORECASE)
         if match:
-            pipeline_state["metrics"]["jira_tests_created"] = int(match.group(1))
+            pipeline_state["metrics"]["jira_tests_created"] += 1
+        match_summary = re.search(r'New Issues Created\s*:\s*(\d+)', line)
+        if match_summary:
+            pipeline_state["metrics"]["jira_tests_created"] = int(match_summary.group(1))
         updated = True
+
     elif "[SUCCESS] Pipeline Complete" in line:
         pipeline_state["currentStep"] = 7  # Complete
         updated = True
@@ -464,6 +467,19 @@ def load_kb_metrics(repo: str = "") -> dict:
             except Exception as e:
                 print(f"Error parsing test_plan.json: {e}")
         
+        # Check .jira_synced.json for persistent Jira count
+        synced_count = 0
+        synced_file = find_output_file(repo, ".jira_synced.json")
+        if synced_file and synced_file.exists():
+            try:
+                with open(synced_file, "r", encoding="utf-8") as sf:
+                    synced_items = json.load(sf)
+                    synced_count = len(synced_items)
+            except Exception:
+                synced_count = 0
+
+        final_jira_count = max(synced_count, pipeline_state["metrics"].get("jira_tests_created", 0))
+
         return {
             "files_scanned": len(files),
             "lines_analyzed": total_loc,
@@ -491,8 +507,8 @@ def load_kb_metrics(repo: str = "") -> dict:
             "integration_security": integration_security,
             "test_cases_generated": unit_total + integration_total,
             "total_files": total_files,
-            "bugs_pushed": pipeline_state["metrics"].get("jira_tests_created", 0),
-            "jira_status": "Synced" if pipeline_state["metrics"].get("jira_tests_created", 0) > 0 else "Waiting...",
+            "bugs_pushed": final_jira_count,
+            "jira_status": "Synced" if final_jira_count > 0 else "Waiting...",
             "jira_project_url": os.getenv("JIRA_PROJECT_URL", f"{os.getenv('JIRA_URL', 'https://sreejabiswas2.atlassian.net')}/browse/{os.getenv('JIRA_PROJECT_KEY', 'SCRUM')}")
         }
     except Exception as e:
@@ -568,15 +584,22 @@ async def get_jira_status(repo: str = ""):
     }
 
 @app.post("/api/jira-sync")
-async def sync_to_jira(request: RunRequest):
+async def sync_to_jira(request: RunRequest, background_tasks: BackgroundTasks):
     repo = request.repo.strip() or pipeline_state.get("repo_name", "")
-    metrics = load_kb_metrics(repo)
+    if not repo:
+        return {"status": "error", "message": "Repository name is required for Jira sync."}
+
+    if pipeline_state["isRunning"]:
+        return {"status": "error", "message": "Another task is already running"}
+
+    background_tasks.add_task(run_agent_task, "push_to_jira.py", repo)
     return {
         "status": "ok",
-        "message": "Successfully synchronized test cases to Jira!",
-        "bugs_pushed": metrics.get("bugs_pushed", 0),
-        "sync_status": "Synced"
+        "message": f"Jira Synchronization started for repository '{repo}'",
+        "bugs_pushed": load_kb_metrics(repo).get("bugs_pushed", 0),
+        "sync_status": "Syncing..."
     }
+
 
 if __name__ == "__main__":
     import uvicorn
