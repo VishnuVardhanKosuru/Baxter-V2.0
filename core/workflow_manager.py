@@ -1,5 +1,6 @@
 import base64
 import time
+from pathlib import Path
 from typing import Optional, Dict
 from core.github_client import GitHubClient
 
@@ -38,7 +39,19 @@ class WorkflowManager:
         
         print("  Committing extract_ast.py...")
         self.client.commit_file(owner, repo, self.SCRIPT_PATH, script_b64, "Add/Update AST extraction script", sha=sha)
-            
+
+        # Check and commit custom CodeQL query files
+        queries_dir = Path("templates/queries")
+        if queries_dir.exists():
+            for ql_file in queries_dir.glob("*.ql"):
+                target_ql_path = f".github/scripts/queries/{ql_file.name}"
+                with open(ql_file, "rb") as f:
+                    ql_b64 = base64.b64encode(f.read()).decode()
+                q_info = self.client.get_file(owner, repo, target_ql_path)
+                q_sha = q_info.get("sha") if q_info else None
+                print(f"  Committing {target_ql_path}...")
+                self.client.commit_file(owner, repo, target_ql_path, ql_b64, f"Add/Update query {ql_file.name}", sha=q_sha)
+
         if changed:
             print("  Setup complete. Waiting 5 seconds for GitHub to register workflow...")
             time.sleep(5)

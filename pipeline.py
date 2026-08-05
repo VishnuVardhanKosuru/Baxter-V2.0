@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import argparse
 import subprocess
@@ -42,8 +43,7 @@ def main():
         print(f"Previous SHA: {previous_sha}")
 
     if previous_sha == latest_sha:
-        print("\n[ABORT] No new changes detected since last scan. The pipeline is up to date!")
-        return
+        print("\nNo commit delta detected. Running full pipeline scan and test generation...")
 
     # 3. Determine Changed Files (if delta mode)
     changed_files = []
@@ -58,25 +58,27 @@ def main():
     print("\n=== Phase 1: Running Scanner Agent ===")
     env = os.environ.copy()
     env["PYTHONPATH"] = "."
-    scan_result = subprocess.run(["python", "agents/scanner_agent.py", "--repo", args.repo], env=env)
+    scan_result = subprocess.run([sys.executable, "agents/scanner_agent.py", "--repo", args.repo], env=env)
     if scan_result.returncode != 0:
         print("Scanner agent failed. Aborting pipeline.")
         return
 
     # 5. Run Tester Agent
     print("\n=== Phase 2: Running Tester Agent ===")
-    tester_cmd = ["python", "agents/tester_agent.py", "--repo", args.repo]
-    if is_delta:
-        if not changed_files:
-            print("No source files changed. Skipping Tester phase.")
-        else:
-            tester_cmd.extend(["--changed-files", ",".join(changed_files)])
-            tester_result = subprocess.run(tester_cmd, env=env)
+    tester_cmd = [sys.executable, "agents/tester_agent.py", "--repo", args.repo]
+    if is_delta and changed_files:
+        print(f"Delta Mode: Testing {len(changed_files)} changed files...")
+        tester_cmd.extend(["--changed-files", ",".join(changed_files)])
     else:
-        print("Full Scan Mode: Testing all files...")
-        tester_result = subprocess.run(tester_cmd, env=env)
+        print("Full Scan Mode: Generating test suite across all target functions...")
+        
+    tester_result = subprocess.run(tester_cmd, env=env)
 
-    # 6. Update State
+    # 6. Run Jira Integration Agent
+    print("\n=== Phase 3: Running Jira Integration Agent ===")
+    jira_result = subprocess.run([sys.executable, "push_to_jira.py"], env=env)
+
+    # 7. Update State
     with open(state_file, "w") as f:
         json.dump({"last_commit_sha": latest_sha}, f)
     

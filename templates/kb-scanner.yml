@@ -36,37 +36,102 @@ jobs:
           path: ast.json
           retention-days: 30
 
-  codeql:
-    name: CodeQL Analysis
+  codeql-structural:
+    name: CodeQL Structural Extraction
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    # We use a matrix so it can scan multiple languages if needed.
-    # In a real dynamic setup, we'd want to populate this dynamically,
-    # but for simplicity we assume the caller has determined the language.
-    # We will pass the detected languages to CodeQL init.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          # If inputs.languages is empty, CodeQL will attempt to auto-detect
-          languages: ${{ github.event.inputs.languages }}
-          # This is the magic setting: tells CodeQL to NOT compile the code
-          build-mode: none
+      - name: Download CodeQL CLI
+        run: |
+          wget -q https://github.com/github/codeql-cli-binaries/releases/latest/download/codeql-linux64.zip
+          unzip -q codeql-linux64.zip -d $HOME/codeql_home
+          echo "$HOME/codeql_home/codeql" >> $GITHUB_PATH
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          output: sarif-results
-          upload: false
+      - name: Run CodeQL Queries
+        run: |
+          CODEQL_BIN="$HOME/codeql_home/codeql/codeql"
+          
+          # Create CodeQL database for Java
+          $CODEQL_BIN database create codeql-db --language=java --build-mode=none || true
 
-      - name: Upload SARIF as artifact
+          # Run queries if QL files exist
+          if [ -d ".github/scripts/queries" ]; then
+            $CODEQL_BIN query run .github/scripts/queries/method_signatures.ql --database=codeql-db --output=signatures.bqrs 2>/dev/null || true
+            $CODEQL_BIN query run .github/scripts/queries/call_graph.ql --database=codeql-db --output=calls.bqrs 2>/dev/null || true
+            $CODEQL_BIN query run .github/scripts/queries/annotation_values.ql --database=codeql-db --output=annotations.bqrs 2>/dev/null || true
+
+            $CODEQL_BIN bqrs decode signatures.bqrs --format=json --output=signatures.json 2>/dev/null || echo '{"#select":{"tuples":[]}}' > signatures.json
+            $CODEQL_BIN bqrs decode calls.bqrs --format=json --output=calls.json 2>/dev/null || echo '{"#select":{"tuples":[]}}' > calls.json
+            $CODEQL_BIN bqrs decode annotations.bqrs --format=json --output=annotations.json 2>/dev/null || echo '{"#select":{"tuples":[]}}' > annotations.json
+          else
+            echo '{"#select":{"tuples":[]}}' > signatures.json
+            echo '{"#select":{"tuples":[]}}' > calls.json
+            echo '{"#select":{"tuples":[]}}' > annotations.json
+          fi
+
+          python3 -c "
+          import json, os
+
+          def parse_tuples(file_path, keys):
+              if not os.path.exists(file_path): return []
+              try:
+                  with open(file_path) as f:
+                      data = json.load(f)
+                  tuples = data.get('#select', {}).get('tuples', [])
+                  return [dict(zip(keys, t)) for t in tuples]
+              except Exception as e:
+                  print(f'Error parsing {file_path}: {e}')
+                  return []
+
+          signatures = parse_tuples('signatures.json', ['declaring_class', 'method_name', 'return_type', 'file_path', 'line_start', 'line_end', 'qualified_name'])
+          calls = parse_tuples('calls.json', ['caller_class', 'caller_method', 'callee_class', 'callee_method', 'callee_return_type', 'call_line'])
+          annotations = parse_tuples('annotations.json', ['class_name', 'method_name', 'annotation_name', 'element_name', 'element_value'])
+
+          structural = {
+              'method_signatures': signatures,
+              'call_graph': calls,
+              'annotation_values': annotations
+          }
+
+          with open('codeql_structural.json', 'w') as f:
+              json.dump(structural, f, indent=2)
+          print(f'Aggregated codeql_structural.json: {len(signatures)} sigs, {len(calls)} calls, {len(annotations)} annotations')
+          "
+
+      - name: Upload Structural Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codeql-results
-          path: sarif-results/
+          name: codeql-structural
+          path: codeql_structural.json
           retention-days: 30
+
+# PAUSED: CodeQL Vulnerability Analysis (Commented out to focus on structural extraction)
+#  codeql:
+#    name: CodeQL Analysis
+#    runs-on: ubuntu-latest
+#    permissions:
+#      actions: read
+#      contents: read
+#      security-events: write
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Initialize CodeQL
+#        uses: github/codeql-action/init@v3
+#        with:
+#          languages: ${{ github.event.inputs.languages }}
+#          build-mode: none
+#
+#      - name: Perform CodeQL Analysis
+#        uses: github/codeql-action/analyze@v3
+#        with:
+#          output: sarif-results
+#          upload: false
+#
+#      - name: Upload SARIF as artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: codeql-results
+#          path: sarif-results/
+#          retention-days: 30
