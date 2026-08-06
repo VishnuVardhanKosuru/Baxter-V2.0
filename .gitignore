@@ -12,14 +12,23 @@ dist
 dist-ssr
 *.local
 
-# Python
+# Environment & Secrets
+.env
+*.env
+
+# Python Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Python cache & bytecode
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 *.so
 .Python
-env/
-venv/
 build/
 develop-eggs/
 downloads/
@@ -35,10 +44,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Editor directories and files
+# Editor & OS files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -49,3 +58,4 @@ Thumbs.db
 
 # Runtime directories
 uploads/
+
