@@ -1,33 +1,32 @@
-# Environment & Secrets
-.env
-
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual environment
-venv/
-.venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
 env/
-
-# Frontend dependencies
-frontend/node_modules/
-node_modules/
-
-# Build outputs
-frontend/build/
-frontend/dist/
-dist/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# IDE / OS
-.vscode/
+# IDEs
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
