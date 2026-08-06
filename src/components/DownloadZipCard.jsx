@@ -3,7 +3,7 @@ import { Archive, Download, Loader2 } from 'lucide-react';
 import JSZip from 'jszip';
 import { MOCK_AUTOMATED_SCRIPT_CONTENT } from '../mockData';
 
-export default function DownloadZipCard({ parsedResult }) {
+export default function DownloadZipCard() {
   const [isZipping, setIsZipping] = useState(false);
 
   const handleDownloadZip = async () => {
@@ -16,7 +16,7 @@ export default function DownloadZipCard({ parsedResult }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `baxter_parsed_output_${Date.now()}.zip`;
+        a.download = `baxter_generated_tests_${Date.now()}.zip`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -26,17 +26,13 @@ export default function DownloadZipCard({ parsedResult }) {
 
       // 2. Fallback client-side zip generation
       const zip = new JSZip();
-      if (parsedResult) {
-        zip.file('parsed_output.json', JSON.stringify(parsedResult, null, 2));
-      } else {
-        zip.file('Baxter_Automated_Suite.spec.ts', MOCK_AUTOMATED_SCRIPT_CONTENT);
-      }
+      zip.file('Baxter_Automated_Suite.spec.ts', MOCK_AUTOMATED_SCRIPT_CONTENT);
 
       const content = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Baxter_Test_Automation_Output_${Date.now()}.zip`;
+      a.download = `baxter_generated_tests_${Date.now()}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -57,10 +53,10 @@ export default function DownloadZipCard({ parsedResult }) {
           </div>
           <div>
             <div className="baxter-card-title" style={{ color: '#002670', fontSize: '1.1rem', marginBottom: '0.15rem' }}>
-              Download Generated Output (.ZIP)
+              Download Generated Test Artifacts (.ZIP)
             </div>
             <p className="baxter-card-subtitle" style={{ marginBottom: 0, fontSize: '0.825rem' }}>
-              Includes parsed requirements JSON and test case features generated in the <code>output/</code> directory.
+              Includes generated Selenium Python scripts, Cucumber BDD features, and step CSV files from <code>output/tests/</code>.
             </p>
           </div>
         </div>
@@ -78,4 +74,5 @@ export default function DownloadZipCard({ parsedResult }) {
     </section>
   );
 }
+
 

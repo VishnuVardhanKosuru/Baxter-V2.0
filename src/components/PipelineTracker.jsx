@@ -9,7 +9,7 @@ export default function PipelineTracker({ stepsState }) {
       subtitles: {
         pending: 'Not Started',
         running: 'Parsing FRD & Test Cases...',
-        success: 'Parsed & Output Generated',
+        success: 'Parsed & Context Extracted',
         failed: 'Parsing Failed'
       }
     },
@@ -18,8 +18,8 @@ export default function PipelineTracker({ stepsState }) {
       title: 'Generation of Test Cases',
       subtitles: {
         pending: 'Pending Execution',
-        running: 'Generating Code Scripts...',
-        success: 'Scripts Generated',
+        running: 'Generating Selenium & Cucumber Scripts...',
+        success: 'Selenium & BDD Features Generated',
         failed: 'Generation Failed'
       }
     }

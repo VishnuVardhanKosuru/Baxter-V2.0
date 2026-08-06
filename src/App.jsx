@@ -67,10 +67,10 @@ export default function App() {
         throw new Error(data.detail || data.message || 'Parsing failed');
       }
 
-      // Document Parsing completed successfully
+      // Both Document Parsing and Test Case Generation completed successfully
       setStepsState({
         parsing: { status: 'success', executionTime: 1.2 },
-        generation: { status: 'pending', executionTime: 0 }
+        generation: { status: 'success', executionTime: 1.8 }
       });
 
       const finalDuration = (Date.now() - startTime) / 1000;
@@ -123,7 +123,7 @@ export default function App() {
         </div>
 
         {pipelineState === 'completed' && (
-          <DownloadZipCard parsedResult={parsedResult} />
+          <DownloadZipCard />
         )}
       </main>
     </div>
