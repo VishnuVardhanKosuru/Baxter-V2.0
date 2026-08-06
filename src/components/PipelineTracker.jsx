@@ -1,15 +1,27 @@
 import React from 'react';
-import { Check, Cpu, Loader2 } from 'lucide-react';
+import { Check, Cpu, Loader2, X } from 'lucide-react';
 
 export default function PipelineTracker({ stepsState }) {
   const stepsConfig = [
     {
       id: 'parsing',
-      title: 'Document Parsing'
+      title: 'Document Parsing',
+      subtitles: {
+        pending: 'Not Started',
+        running: 'Parsing FRD & Test Cases...',
+        success: 'Parsed & Output Generated',
+        failed: 'Parsing Failed'
+      }
     },
     {
       id: 'generation',
-      title: 'Generation of Test Cases'
+      title: 'Generation of Test Cases',
+      subtitles: {
+        pending: 'Pending Execution',
+        running: 'Generating Code Scripts...',
+        success: 'Scripts Generated',
+        failed: 'Generation Failed'
+      }
     }
   ];
 
@@ -31,8 +43,8 @@ export default function PipelineTracker({ stepsState }) {
       <div className="stepper-pipeline-container">
         <div className="stepper-track">
           {stepsConfig.map((step, idx) => {
-            const stepData = stepsState[step.id];
-            const status = stepData.status; // 'pending' | 'running' | 'success'
+            const stepData = stepsState[step.id] || { status: 'pending' };
+            const status = stepData.status; // 'pending' | 'running' | 'success' | 'failed'
             
             // Connecting line status to the next node
             let lineClass = 'pending';
@@ -40,6 +52,8 @@ export default function PipelineTracker({ stepsState }) {
               lineClass = 'completed';
             } else if (status === 'running') {
               lineClass = 'running';
+            } else if (status === 'failed') {
+              lineClass = 'failed';
             }
 
             return (
@@ -47,15 +61,19 @@ export default function PipelineTracker({ stepsState }) {
                 {/* Stepper Node Item */}
                 <div className="stepper-node-item">
                   {/* Circle Icon Badge */}
-                  <div className={`node-circle ${status}`}>
+                  <div className={`node-circle ${status}`} style={status === 'failed' ? { backgroundColor: '#EF4444', borderColor: '#DC2626' } : {}}>
                     {status === 'success' && <Check size={24} color="#FFFFFF" strokeWidth={3} />}
+                    {status === 'failed' && <X size={22} color="#FFFFFF" strokeWidth={3} />}
                     {status === 'running' && <Loader2 size={22} color="#FFFFFF" className="spin" />}
                     {status === 'pending' && <div className="pending-inner-dot" />}
                   </div>
 
                   {/* Node Label Details */}
                   <div className="node-details">
-                    <div className="node-title">{step.title}</div>
+                    <div className="node-title" style={status === 'failed' ? { color: '#DC2626' } : {}}>{step.title}</div>
+                    <div className="node-status-sub" style={{ fontSize: '0.75rem', color: status === 'success' ? '#059669' : '#64748B', fontWeight: 600, marginTop: '2px' }}>
+                      {step.subtitles[status] || status}
+                    </div>
                   </div>
                 </div>
 
@@ -71,3 +89,5 @@ export default function PipelineTracker({ stepsState }) {
     </section>
   );
 }
+
+

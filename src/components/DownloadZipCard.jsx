@@ -3,21 +3,36 @@ import { Archive, Download, Loader2 } from 'lucide-react';
 import JSZip from 'jszip';
 import { MOCK_AUTOMATED_SCRIPT_CONTENT } from '../mockData';
 
-export default function DownloadZipCard() {
+export default function DownloadZipCard({ parsedResult }) {
   const [isZipping, setIsZipping] = useState(false);
 
   const handleDownloadZip = async () => {
     setIsZipping(true);
     try {
+      // 1. Try downloading zip from backend /api/download-zip
+      const res = await fetch('/api/download-zip');
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `baxter_parsed_output_${Date.now()}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      // 2. Fallback client-side zip generation
       const zip = new JSZip();
+      if (parsedResult) {
+        zip.file('parsed_output.json', JSON.stringify(parsedResult, null, 2));
+      } else {
+        zip.file('Baxter_Automated_Suite.spec.ts', MOCK_AUTOMATED_SCRIPT_CONTENT);
+      }
 
-      // 1. Add Automated Test Script
-      zip.file('Baxter_Automated_Suite.spec.ts', MOCK_AUTOMATED_SCRIPT_CONTENT);
-
-      // Generate Zip Blob
       const content = await zip.generateAsync({ type: 'blob' });
-
-      // Trigger Browser Download
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
@@ -45,7 +60,7 @@ export default function DownloadZipCard() {
               Download Generated Output (.ZIP)
             </div>
             <p className="baxter-card-subtitle" style={{ marginBottom: 0, fontSize: '0.825rem' }}>
-              Includes compiled automated test scripts (.spec.ts).
+              Includes parsed requirements JSON and test case features generated in the <code>output/</code> directory.
             </p>
           </div>
         </div>
@@ -63,3 +78,4 @@ export default function DownloadZipCard() {
     </section>
   );
 }
+

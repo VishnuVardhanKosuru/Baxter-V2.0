@@ -4,20 +4,20 @@ import InputSection from './components/InputSection';
 import PipelineTracker from './components/PipelineTracker';
 import TestMetricsCard from './components/TestMetricsCard';
 import DownloadZipCard from './components/DownloadZipCard';
-import { SAMPLE_FRD, SAMPLE_EXCEL } from './mockData';
 
 export default function App() {
-  // Default to empty state ready for file uploads
   const [frdFile, setFrdFile] = useState(null);
   const [excelFile, setExcelFile] = useState(null);
 
-  // Pipeline execution state: 'idle' | 'running' | 'completed'
+  // Pipeline execution state: 'idle' | 'running' | 'completed' | 'error'
   const [pipelineState, setPipelineState] = useState('idle');
+  const [parsedResult, setParsedResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
   // Total Stopwatch Execution Time in seconds
   const [totalExecutionTime, setTotalExecutionTime] = useState(0);
 
-  // Individual Stage execution timer & status states
+  // Stage execution status
   const [stepsState, setStepsState] = useState({
     parsing: { status: 'pending', executionTime: 0 },
     generation: { status: 'pending', executionTime: 0 }
@@ -25,17 +25,16 @@ export default function App() {
 
   const timerRef = useRef(null);
 
-  // Clean up timer on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  // Main Pipeline Execution Logic
-  const handleRunPipeline = () => {
-    // Reset states
+  const handleRunPipeline = async () => {
     setPipelineState('running');
+    setErrorMessage('');
+    setParsedResult(null);
     setTotalExecutionTime(0);
     setStepsState({
       parsing: { status: 'running', executionTime: 0 },
@@ -43,65 +42,65 @@ export default function App() {
     });
 
     const startTime = Date.now();
-
-    // Start global stopwatch timer tick (every 30ms for smooth live timer)
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       setTotalExecutionTime((Date.now() - startTime) / 1000);
-    }, 30);
-
-    // Stage 1: Document Parsing (1.8s)
-    let pTime = 0;
-    const pTimer = setInterval(() => {
-      pTime += 0.05;
-      setStepsState((prev) => ({
-        ...prev,
-        parsing: { ...prev.parsing, executionTime: pTime }
-      }));
     }, 50);
 
-    setTimeout(() => {
-      clearInterval(pTimer);
-      setStepsState((prev) => ({
-        ...prev,
-        parsing: { status: 'success', executionTime: 1.85 },
-        generation: { status: 'running', executionTime: 0 }
-      }));
+    try {
+      const formData = new FormData();
+      if (frdFile?.rawFile && excelFile?.rawFile) {
+        formData.append('frd_file', frdFile.rawFile);
+        formData.append('tc_file', excelFile.rawFile);
+      } else {
+        formData.append('use_sample', 'true');
+      }
 
-      // Stage 2: Test Case Generation (2.6s)
-      let gTime = 0;
-      const gTimer = setInterval(() => {
-        gTime += 0.05;
-        setStepsState((prev) => ({
-          ...prev,
-          generation: { ...prev.generation, executionTime: gTime }
-        }));
-      }, 50);
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        body: formData,
+      });
 
-      setTimeout(() => {
-        clearInterval(gTimer);
-        clearInterval(timerRef.current);
-        setStepsState((prev) => ({
-          ...prev,
-          generation: { status: 'success', executionTime: 2.60 }
-        }));
+      const data = await res.json();
 
-        // Final pipeline completion
-        const finalDuration = (Date.now() - startTime) / 1000;
-        setTotalExecutionTime(finalDuration);
-        setPipelineState('completed');
-      }, 2600);
-    }, 1850);
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.message || 'Parsing failed');
+      }
+
+      // Document Parsing completed successfully
+      setStepsState({
+        parsing: { status: 'success', executionTime: 1.2 },
+        generation: { status: 'pending', executionTime: 0 }
+      });
+
+      const finalDuration = (Date.now() - startTime) / 1000;
+      setTotalExecutionTime(finalDuration);
+      setParsedResult(data);
+      setPipelineState('completed');
+    } catch (err) {
+      console.error('Error running parser pipeline:', err);
+      setErrorMessage(err.message || 'Failed to connect to parser backend');
+      setStepsState({
+        parsing: { status: 'failed', executionTime: 0 },
+        generation: { status: 'failed', executionTime: 0 }
+      });
+      setPipelineState('idle');
+    } finally {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
   };
 
   return (
     <div className="baxter-app">
-      {/* Baxter Header */}
       <BaxterHeader pipelineState={pipelineState} />
 
-      {/* Main Container */}
       <main className="baxter-main-content">
-        {/* Upload & Setup Section */}
+        {errorMessage && (
+          <div style={{ padding: '0.85rem 1.15rem', backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 8, marginBottom: '1rem', fontSize: '0.875rem' }}>
+            <strong>Error:</strong> {errorMessage}
+          </div>
+        )}
+
         <InputSection
           frdFile={frdFile}
           setFrdFile={setFrdFile}
@@ -111,21 +110,23 @@ export default function App() {
           onRunPipeline={handleRunPipeline}
         />
 
-        {/* Side-by-Side Row: Execution Flow & Generated Test Metrics */}
         <div className="flow-metrics-row">
           <PipelineTracker
             pipelineState={pipelineState}
             stepsState={stepsState}
             totalExecutionTime={totalExecutionTime}
           />
-          <TestMetricsCard pipelineState={pipelineState} />
+          <TestMetricsCard
+            pipelineState={pipelineState}
+            parsedResult={parsedResult}
+          />
         </div>
 
-        {/* Dedicated Separate Box to Download Output in ZIP format */}
         {pipelineState === 'completed' && (
-          <DownloadZipCard />
+          <DownloadZipCard parsedResult={parsedResult} />
         )}
       </main>
     </div>
   );
 }
+

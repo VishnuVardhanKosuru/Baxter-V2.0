@@ -47,3 +47,5 @@ wheels/
 *.sw?
 Thumbs.db
 
+# Runtime directories
+uploads/
