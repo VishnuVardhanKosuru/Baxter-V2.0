@@ -23,12 +23,13 @@ Baxter/
 ├── agents/
 │   ├── constants.py      # Pre-compiled regex, table keys, and system constants
 │   ├── models.py         # Structured Python dataclasses (DTOs)
-│   └── doc_parser.py     # Stage 1: Document Parsing & Enrichment Engine
+│   ├── doc_parser.py     # Stage 1: Document Parsing & Enrichment Engine
+│   └── cs_agent.py       # Stage 2: Unified BDD & Selenium Code Generator Agent
+├── samples/              # Default `.docx` fallback sample documents
 ├── src/
-│   ├── components/       # App UI components (Ingestion, PipelineTracker, Metrics)
+│   ├── components/       # App UI components
 │   ├── App.jsx           # Main React controller
 │   └── index.css         # Styling system
-├── c&s_agent.py          # Stage 2: Unified BDD & Selenium Code Generator Agent
 ├── server.py             # FastAPI backend orchestrating python processes
 ├── vite.config.js        # React/Vite development server configurations
 └── package.json          # Node dependencies & package scripts
@@ -56,20 +57,24 @@ Baxter/
    ```
 
 3. **Configure Environment Variables:**
-   Create a `.env` file in the project root:
+   Create a `.env` file in the project root to control server settings and LLM keys:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-3.1-flash-lite
+   SERVER_PORT=5000
+   SERVER_HOST=127.0.0.1
    ```
 
 ### Running the Application
 
-To run the application locally, you can start the backend and frontend concurrently:
+To run the application locally, start the backend and frontend in separate terminals:
 
 * **Start the FastAPI Backend:**
   ```bash
-  python server.py
+  npm run server
+  # Or natively: python server.py
   ```
-  The API will be available on [http://127.0.0.1:5000](http://127.0.0.1:5000).
+  The API will be available on [http://127.0.0.1:5000](http://127.0.0.1:5000). Logs are printed cleanly to this terminal.
 
 * **Start the React Frontend:**
   ```bash
@@ -79,30 +84,11 @@ To run the application locally, you can start the backend and frontend concurren
 
 ---
 
-## 💻 CLI Usage
-
-You can also run both stages of the parsing and generation pipeline via the command line.
-
-### Stage 1: Parse and Enrich Documents
-```bash
-python agents/doc_parser.py \
-  --frd  "ShopSphere_Functional_Requirements_Document.docx" \
-  --tc   "ShopSphere_Manual_Testcases.docx" \
-  --out  "output"
-```
-
-### Stage 2: Generate Cucumber & Selenium Tests
-```bash
-python c&s_agent.py \
-  --input "output/shopsphere_parsed.json" \
-  --out   "output/tests" \
-  --model "gemini-2.5-flash"
-```
-
----
-
 ## 🔌 API Endpoints
 
+The system relies strictly on HTTP API endpoints; the internal CLI has been deprecated to guarantee clean execution boundaries.
+
 * **`GET /api/health`** — Service health status check.
-* **`POST /api/parse`** — Ingests the FRD & Test Case `.docx` files, processes both stages, and saves the output in `output/`.
-* **`GET /api/download-zip`** — Packs the generated cucumber and selenium files inside `output/tests/` into an in-memory ZIP archive stream.
+* **`POST /api/stage1-parse`** — Ingests the FRD & Test Case `.docx` files, processes them, and saves the output JSON in `output/`.
+* **`POST /api/stage2-generate`** — Triggers the LLM agents to generate cucumber and selenium test suites inside `output/tests/`.
+* **`GET /api/download-zip`** — Packs the generated cucumber and selenium files into an in-memory ZIP archive stream for browser download.

@@ -42,7 +42,9 @@ COL_EXPECTED_RESULT = ("expected result", "expected")
 COL_EXECUTION_STATUS = ("execution status", "status")
 
 # ─── SYSTEM DEFAULTS ─────────────────────────────────────────────────────────
+# Project name and output filename are resolved dynamically at parse time
+# from the FRD filename. These values are used only when dynamic resolution fails.
 UNKNOWN_FEATURE_REF = "UNKNOWN"
-DEFAULT_PROJECT_NAME = "ShopSphere"
-DEFAULT_VERSION = "2.0"
-DEFAULT_OUTPUT_FILENAME = "shopsphere_parsed.json"
+DEFAULT_PROJECT_NAME = "Project"
+DEFAULT_VERSION = "1.0"
+DEFAULT_OUTPUT_FILENAME = "parsed_output.json"

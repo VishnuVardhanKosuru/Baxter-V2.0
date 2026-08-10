@@ -58,6 +58,6 @@ Thumbs.db
 
 # Runtime directories
 uploads/
-output/tests/
+output/
 
 

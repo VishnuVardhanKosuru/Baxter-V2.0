@@ -3,22 +3,14 @@ doc_parser.py
 ─────────────
 Parses a Functional Requirements Document (FRD) and a Manual Test Cases
 document (both .docx) and produces a structured JSON output.
-
-Usage
-─────
-python agents/doc_parser.py \
-    --frd  <path/to/FRD.docx> \
-    --tc   <path/to/ManualTestCases.docx> \
-    --out  <output/folder> \
-    --skip-types "Security,Performance"
 """
 
-import argparse
 import difflib
 import json
 import os
 import re
 import sys
+from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
 import docx
@@ -36,35 +28,6 @@ from models import (
     ParserSummaryModel,
     ParsedDocumentResponse,
 )
-
-
-# ─── CLI ARGUMENTS ───────────────────────────────────────────────────────────
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Parse FRD + Manual Test Cases .docx files into structured JSON."
-    )
-    parser.add_argument(
-        "--frd",
-        required=True,
-        help="Path to the Functional Requirements Document (.docx)"
-    )
-    parser.add_argument(
-        "--tc",
-        required=True,
-        help="Path to the Manual Test Cases document (.docx)"
-    )
-    parser.add_argument(
-        "--out",
-        required=True,
-        help="Output folder where JSON file will be written"
-    )
-    parser.add_argument(
-        "--skip-types",
-        default="",
-        help='Comma-separated list of test types to skip. Example: "Security,Performance"'
-    )
-    return parser.parse_args()
 
 
 # ─── TEXT UTILITIES ───────────────────────────────────────────────────────────
@@ -382,24 +345,47 @@ def parse_test_cases(
 
 # ─── MAIN EXECUTION ───────────────────────────────────────────────────────────
 
-def main():
-    args = parse_args()
-    skip_types = [s.strip() for s in args.skip_types.split(",") if s.strip()]
+def parse_documents(
+    frd_path: str,
+    tc_path: str,
+    out_dir: str,
+    project: str = "",
+    version: str = const.DEFAULT_VERSION,
+    skip_types: Optional[List[str]] = None,
+) -> str:
+    """
+    Importable API — parses FRD + TC docs and writes structured JSON.
+    Returns the absolute path to the generated JSON file.
 
-    print(f"\n[INFO] FRD File : {args.frd}")
-    print(f"[INFO] TC File  : {args.tc}")
-    print(f"[INFO] Out Dir  : {args.out}")
+    Called directly by server.py (no subprocess / CLI needed).
+    """
+    skip_types = skip_types or []
+
+    # Derive project name and output filename dynamically from FRD stem
+    frd_stem = Path(frd_path).stem
+    project_name = (
+        project
+        if project
+        else frd_stem.replace("_", " ").split("Functional")[0].strip() or frd_stem
+    )
+    safe_slug = re.sub(r"[^\w]+", "_", project_name.lower()).strip("_")
+    output_filename = f"{safe_slug}_parsed.json"
+
+    print(f"\n[INFO] FRD File : {frd_path}")
+    print(f"[INFO] TC File  : {tc_path}")
+    print(f"[INFO] Out Dir  : {out_dir}")
+    print(f"[INFO] Project  : {project_name}")
     print(f"[INFO] Skip     : {skip_types or 'None'}\n")
 
     print("[PARSING] Parsing FRD...")
-    features, feature_name_map, features_by_id = parse_frd(args.frd)
+    features, feature_name_map, features_by_id = parse_frd(frd_path)
 
-    print(f"\n[PARSING] Parsing & Enriching Manual Test Cases with FRD Context...")
-    test_cases = parse_test_cases(args.tc, feature_name_map, features_by_id, skip_types)
+    print("\n[PARSING] Parsing & Enriching Manual Test Cases with FRD Context...")
+    test_cases = parse_test_cases(tc_path, feature_name_map, features_by_id, skip_types)
 
     response_payload = ParsedDocumentResponse(
-        project=const.DEFAULT_PROJECT_NAME,
-        version=const.DEFAULT_VERSION,
+        project=project_name,
+        version=version,
         summary=ParserSummaryModel(
             total_test_cases=len(test_cases),
             skipped_types=skip_types,
@@ -407,8 +393,8 @@ def main():
         test_cases=test_cases,
     )
 
-    os.makedirs(args.out, exist_ok=True)
-    output_path = os.path.join(args.out, const.DEFAULT_OUTPUT_FILENAME)
+    os.makedirs(out_dir, exist_ok=True)
+    output_path = os.path.join(out_dir, output_filename)
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(response_payload.to_dict(), f, indent=2, ensure_ascii=False)
@@ -418,6 +404,4 @@ def main():
     print(f"  Test cases parsed & enriched : {len(test_cases)}")
     print(f"  Output saved to              : {output_path}")
 
-
-if __name__ == "__main__":
-    main()
+    return output_path

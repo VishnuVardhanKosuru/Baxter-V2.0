@@ -433,4 +433,3 @@ def run_agent(
     print(f"      Cucumber features  : {cuc_dir}")
     print(f"      Selenium scripts   : {sel_dir}")
     print("=" * SEPARATOR_WIDTH)
-

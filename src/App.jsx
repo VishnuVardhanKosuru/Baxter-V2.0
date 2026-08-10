@@ -6,30 +6,22 @@ import TestMetricsCard from './components/TestMetricsCard';
 import DownloadZipCard from './components/DownloadZipCard';
 
 export default function App() {
-  const [frdFile, setFrdFile] = useState(null);
+  const [frdFile,   setFrdFile]   = useState(null);
   const [excelFile, setExcelFile] = useState(null);
 
-  // Pipeline execution state: 'idle' | 'running' | 'completed' | 'error'
   const [pipelineState, setPipelineState] = useState('idle');
-  const [parsedResult, setParsedResult] = useState(null);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [parsedResult,  setParsedResult]  = useState(null);
+  const [errorMessage,  setErrorMessage]  = useState('');
 
-  // Total Stopwatch Execution Time in seconds
   const [totalExecutionTime, setTotalExecutionTime] = useState(0);
-
-  // Stage execution status
   const [stepsState, setStepsState] = useState({
-    parsing: { status: 'pending', executionTime: 0 },
-    generation: { status: 'pending', executionTime: 0 }
+    parsing:    { status: 'pending', executionTime: 0 },
+    generation: { status: 'pending', executionTime: 0 },
   });
 
   const timerRef = useRef(null);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
   const handleRunPipeline = async () => {
     setPipelineState('running');
@@ -37,53 +29,75 @@ export default function App() {
     setParsedResult(null);
     setTotalExecutionTime(0);
     setStepsState({
-      parsing: { status: 'running', executionTime: 0 },
-      generation: { status: 'pending', executionTime: 0 }
+      parsing:    { status: 'running', executionTime: 0 },
+      generation: { status: 'pending', executionTime: 0 },
     });
 
     const startTime = Date.now();
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setTotalExecutionTime((Date.now() - startTime) / 1000);
-    }, 50);
+    timerRef.current = setInterval(
+      () => setTotalExecutionTime((Date.now() - startTime) / 1000),
+      50,
+    );
+
+    const formData = new FormData();
+    if (frdFile?.rawFile && excelFile?.rawFile) {
+      formData.append('frd_file', frdFile.rawFile);
+      formData.append('tc_file',  excelFile.rawFile);
+    } else {
+      formData.append('use_sample', 'true');
+    }
 
     try {
-      const formData = new FormData();
-      if (frdFile?.rawFile && excelFile?.rawFile) {
-        formData.append('frd_file', frdFile.rawFile);
-        formData.append('tc_file', excelFile.rawFile);
-      } else {
-        formData.append('use_sample', 'true');
-      }
-
-      const res = await fetch('/api/parse', {
+      // ── Stage 1: Document Parsing ───────────────────────────────────────
+      const s1Res = await fetch('/api/stage1-parse', {
         method: 'POST',
         body: formData,
       });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.message || 'Parsing failed');
+      const s1Data = await s1Res.json();
+      if (!s1Res.ok || !s1Data.success) {
+        throw new Error(s1Data.detail || s1Data.message || 'Stage 1 parsing failed');
       }
+      
+      const s1Result = s1Data.result;
+      const s1Time = (Date.now() - startTime) / 1000;
 
-      // Both Document Parsing and Test Case Generation completed successfully
       setStepsState({
-        parsing: { status: 'success', executionTime: 1.2 },
-        generation: { status: 'success', executionTime: 1.8 }
+        parsing:    { status: 'success', executionTime: s1Time },
+        generation: { status: 'running', executionTime: 0 },
       });
 
-      const finalDuration = (Date.now() - startTime) / 1000;
-      setTotalExecutionTime(finalDuration);
-      setParsedResult(data);
+      // ── Stage 2: Test Code Generation ──────────────────────────────────
+      const s2Res = await fetch('/api/stage2-generate', {
+        method: 'POST',
+      });
+      const s2Data = await s2Res.json();
+      if (!s2Res.ok || !s2Data.success) {
+        throw new Error(s2Data.detail || s2Data.message || 'Stage 2 generation failed');
+      }
+      
+      const s2Result = s2Data.result;
+      const totalDuration = (Date.now() - startTime) / 1000;
+      const s2Time = totalDuration - s1Time;
+
+      setStepsState({
+        parsing:    { status: 'success', executionTime: s1Time },
+        generation: { status: 'success', executionTime: s2Time },
+      });
+      
+      setTotalExecutionTime(totalDuration);
+      setParsedResult(s2Result);
       setPipelineState('completed');
+
     } catch (err) {
-      console.error('Error running parser pipeline:', err);
-      setErrorMessage(err.message || 'Failed to connect to parser backend');
-      setStepsState({
-        parsing: { status: 'failed', executionTime: 0 },
-        generation: { status: 'failed', executionTime: 0 }
-      });
+      console.error('Pipeline error:', err);
+      setErrorMessage(err.message || 'Failed to connect to backend');
+      setStepsState(prev => ({
+        parsing:    prev.parsing.status === 'success'
+          ? prev.parsing
+          : { status: 'failed', executionTime: 0 },
+        generation: { status: 'failed', executionTime: 0 },
+      }));
       setPipelineState('idle');
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -96,7 +110,15 @@ export default function App() {
 
       <main className="baxter-main-content">
         {errorMessage && (
-          <div style={{ padding: '0.85rem 1.15rem', backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 8, marginBottom: '1rem', fontSize: '0.875rem' }}>
+          <div style={{
+            padding: '0.85rem 1.15rem',
+            backgroundColor: '#FEF2F2',
+            border: '1px solid #FCA5A5',
+            color: '#991B1B',
+            borderRadius: 8,
+            marginBottom: '1rem',
+            fontSize: '0.875rem',
+          }}>
             <strong>Error:</strong> {errorMessage}
           </div>
         )}
@@ -122,11 +144,8 @@ export default function App() {
           />
         </div>
 
-        {pipelineState === 'completed' && (
-          <DownloadZipCard />
-        )}
+        {pipelineState === 'completed' && <DownloadZipCard />}
       </main>
     </div>
   );
 }
-
