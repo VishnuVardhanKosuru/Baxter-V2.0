@@ -24,12 +24,12 @@ This JSON Knowledge Base serves as the single source of truth for Phase 2 automa
                               │
                               ▼
                   ┌────────────────────────┐
-                  │    agents/constants.py │  ◄── Regex, Tags, Keys, XML Tokens
+                  │    core/constants.py   │  ◄── Paths, Regex, Tags, Keys, Defaults
                   └───────────┬────────────┘
                               │
                               ▼
                   ┌────────────────────────┐
-                  │     agents/models.py   │  ◄── Strict Dataclasses & Response DTOs
+                  │      core/models.py    │  ◄── Strict Dataclasses & Response DTOs
                   └───────────┬────────────┘
                               │
                               ▼
@@ -147,9 +147,9 @@ The parser instantiates `ParsedDocumentResponse` and serializes the complete dat
 
 | File Path | Purpose / Responsibility | Key Exports / Elements |
 | :--- | :--- | :--- |
-| **[agents/constants.py](file:///c:/Users/2862390/Desktop/New%20folder%20%283%29/vishnu%20branch/agents/constants.py)** | Single source of truth for static string signals, regexes, and keys. | Precompiled regexes (`REGEX_REQUIREMENT_ID`, `REGEX_TC_ID`, `REGEX_NUMBERED_STEPS`), XML tags, table keys, and default schema keys. |
-| **[agents/models.py](file:///c:/Users/2862390/Desktop/New%20folder%20%283%29/vishnu%20branch/agents/models.py)** | Strongly typed Data Transfer Objects (DTOs) ensuring output compliance. | `FeatureModel`, `FeatureContextModel`, `TestCaseModel`, `ParserSummaryModel`, `ParsedDocumentResponse`. |
-| **[agents/doc_parser.py](file:///c:/Users/2862390/Desktop/New%20folder%20%283%29/vishnu%20branch/agents/doc_parser.py)** | Core execution script that reads `.docx` files and writes `shopsphere_parsed.json`. | `parse_frd()`, `parse_test_cases()`, `match_subject_to_feature()`, `main()`. |
+| **[core/constants.py](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/core/constants.py)** | Centralized single source of truth for paths, signals, regexes, and model defaults. | Canonical directory paths (`DIR_OUTPUT`, `DIR_TESTS`, `DIR_SAMPLES`), precompiled regexes (`REGEX_REQUIREMENT_ID`, `REGEX_TC_ID`, `REGEX_NUMBERED_STEPS`), XML tags, table keys, and system defaults. |
+| **[core/models.py](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/core/models.py)** | Strongly typed Data Transfer Objects (DTOs) and Pydantic structured output schemas. | `FeatureModel`, `FeatureContextModel`, `TestCaseModel`, `ParserSummaryModel`, `ParsedDocumentResponse`, `TestCaseRow`, `FullTestCaseOutput`. |
+| **[agents/doc_parser.py](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/agents/doc_parser.py)** | Core execution engine that parses `.docx` files and produces enriched JSON artifacts. | `parse_documents()`, `parse_frd()`, `parse_test_cases()`, `match_subject_to_feature()`. |
 
 ---
 

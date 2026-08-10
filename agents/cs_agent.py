@@ -33,21 +33,49 @@ except ImportError as _e:
     ) from _e
 
 
-# ==============================================================================
-# CONFIGURATION CONSTANTS
-# All tuneable defaults live here — never repeated elsewhere in the file.
-# Override via environment variables.
-# ==============================================================================
-
-DEFAULT_MODEL:          str = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
-DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
-DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
-DEFAULT_OUTPUT_PATH:    str = "output/tests"
-MAX_LLM_RETRIES:        int = 5
-RATE_LIMIT_BASE_WAIT_S: int = 30
-NETWORK_BASE_WAIT_S:    int = 5
-LLM_TEMPERATURE:      float = 0.2   # low = consistent, structured output
-SEPARATOR_WIDTH:        int = 62     # width of ===... banner lines in console output
+try:
+    from core.constants import (
+        WORKSPACE_ROOT,
+        DIR_OUTPUT,
+        DIR_TESTS,
+        DIR_CUCUMBER,
+        DIR_SELENIUM,
+        NAME_EXPECTED_CSV,
+        DEFAULT_INPUT_PATH,
+        DEFAULT_OUTPUT_PATH,
+        DEFAULT_MODEL,
+        FALLBACK_MODEL,
+        DEFAULT_BASE_URL,
+        MAX_LLM_RETRIES,
+        RATE_LIMIT_BASE_WAIT_S,
+        NETWORK_BASE_WAIT_S,
+        LLM_TEMPERATURE,
+        SEPARATOR_WIDTH,
+    )
+    from core.models import TestCaseRow, FullTestCaseOutput
+except ImportError:
+    _root = Path(__file__).parent.parent.resolve()
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from core.constants import (
+        WORKSPACE_ROOT,
+        DIR_OUTPUT,
+        DIR_TESTS,
+        DIR_CUCUMBER,
+        DIR_SELENIUM,
+        NAME_EXPECTED_CSV,
+        DEFAULT_INPUT_PATH,
+        DEFAULT_OUTPUT_PATH,
+        DEFAULT_MODEL,
+        FALLBACK_MODEL,
+        DEFAULT_BASE_URL,
+        MAX_LLM_RETRIES,
+        RATE_LIMIT_BASE_WAIT_S,
+        NETWORK_BASE_WAIT_S,
+        LLM_TEMPERATURE,
+        SEPARATOR_WIDTH,
+    )
+    from core.models import TestCaseRow, FullTestCaseOutput
 
 
 # ==============================================================================
@@ -191,116 +219,38 @@ def generate_all_artifacts(
     """
     Single unified chain: UNIFIED_PROMPT | llm.with_structured_output(FullTestCaseOutput)
 
-    One LLM call generates all 3 artifacts in the same context window, so:
+    One LLM call generates all 3 artifacts in the same context window:
     - The Selenium script steps are naturally aligned with the Gherkin steps.
     - CSV rows, Gherkin, and Selenium share the same understanding of the test case.
     Retries automatically on 429 RESOURCE_EXHAUSTED (rate limit) or transient network errors.
     """
     chain = UNIFIED_PROMPT | llm.with_structured_output(FullTestCaseOutput)
+    last_error = None
+
     for attempt in range(1, max_retries + 1):
         try:
-            return chain.invoke({"tc_json": json.dumps(tc, indent=2), "base_url": base_url or DEFAULT_BASE_URL})
+            return chain.invoke({
+                "tc_json": json.dumps(tc, indent=2),
+                "base_url": base_url or DEFAULT_BASE_URL
+            })
         except Exception as exc:
+            last_error = exc
             err = str(exc).lower()
             is_rate_limit  = "429" in err or "resource_exhausted" in err
             is_network_err = any(t in err for t in ["timeout", "connection", "httpcore", "httpx", "ssl"])
 
             if is_rate_limit:
                 wait = RATE_LIMIT_BASE_WAIT_S * attempt
-                print(f"         [WAIT] Rate limit hit. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                print(f"         [WAIT] Rate limit hit on Gemini API. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
                 time.sleep(wait)
             elif is_network_err and attempt < max_retries:
                 wait = NETWORK_BASE_WAIT_S * attempt
-                print(f"         [WAIT] Network/Timeout error. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                print(f"         [WAIT] Network error contacting Gemini. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
                 time.sleep(wait)
             else:
-                raise
-    raise RuntimeError(f"Failed after {max_retries} retries for TC: {tc.get('tc_id')}")
+                raise RuntimeError(f"Gemini API Error for test case {tc.get('tc_id')}: {exc}") from exc
 
-
-def generate_fallback_artifacts(tc: Dict[str, Any], base_url: str = "") -> FullTestCaseOutput:
-    """Fallback generator when GEMINI_API_KEY is not set or API is unreachable.
-    Builds valid Cucumber & Selenium artifacts directly from parsed test case data.
-    """
-    tc_id       = tc.get("tc_id", "TC-001")
-    title       = tc.get("title", "Test Case")
-    subject     = tc.get("subject", "General")
-    feature_ref = tc.get("feature_ref", "FR-001")
-    steps       = tc.get("steps", ["Perform action"])
-    expected    = tc.get("expected_result", "Action succeeds")
-    tags        = tc.get("cucumber_tags", [f"@{tc_id.lower().replace('-', '_')}"])
-    app_url     = base_url or DEFAULT_BASE_URL
-    pre_cond_list = (tc.get("feature_context") or {}).get("pre_conditions") or []
-    first_precondition = pre_cond_list[0] if pre_cond_list else "System is accessible"
-
-    # Build CSV rows
-    csv_rows = [
-        TestCaseRow(
-            testcase=f"{tc_id} - {title}",
-            description=f"Verify {title}",
-            category=(tc.get("type") or ["Functional"])[0],
-            preconditions=first_precondition if idx == 1 else "Previous step passed",
-            stepname=stp,
-            expected_result=expected if idx == len(steps) else "Step completed successfully",
-            testdata="valid_input=sample",
-            evidence_required="Screenshot of UI response",
-        )
-        for idx, stp in enumerate(steps, start=1)
-    ]
-
-    # Build Cucumber feature
-    feature_name = (tc.get("feature_context") or {}).get("feature_name") or subject
-    tag_str = " ".join(tags)
-    feature_str = (
-        f"{tag_str}\n"
-        f"Feature: {feature_name}\n"
-        f"  As a user\n"
-        f"  I want to verify {title}\n"
-        f"  So that the system behaves as expected for {feature_ref}\n\n"
-        f"  Scenario: {tc_id} - {title}\n"
-    )
-    for stp in steps:
-        feature_str += f"    Given {stp}\n"
-    feature_str += f"    Then {expected}\n"
-
-    # Build Selenium script
-    clean_id   = tc_id.replace("-", "_").lower()
-    class_name = f"Test{tc_id.replace('-', '')}"
-    selenium_lines = [
-        "import pytest",
-        "from selenium import webdriver",
-        "from selenium.webdriver.common.by import By",
-        "from selenium.webdriver.support.ui import WebDriverWait",
-        "from selenium.webdriver.support import expected_conditions as EC",
-        "",
-        f"class {class_name}:",
-        "    def setup_method(self):",
-        "        options = webdriver.ChromeOptions()",
-        "        options.add_argument('--headless')",
-        "        self.driver = webdriver.Chrome(options=options)",
-        f"        self.driver.get('{app_url}')",
-        "",
-        "    def teardown_method(self):",
-        "        try:",
-        "            self.driver.quit()",
-        "        except Exception:",
-        "            pass",
-        "",
-        f"    def test_{clean_id}(self):",
-        f'        """{title} ({feature_ref})"""',
-        "        driver = self.driver",
-        f"        # Automated test execution steps for {tc_id}",
-    ]
-    for stp in steps:
-        selenium_lines.append(f"        # Step: {stp}")
-        selenium_lines.append("        # TODO: implement selector for this step")
-    selenium_lines.append(f"        assert driver.title is not None, '{expected}'")
-
-    return FullTestCaseOutput(
-        csv_rows=csv_rows,
-        cucumber_feature=feature_str,
-        selenium_script="\n".join(selenium_lines),
-    )
+    raise RuntimeError(f"Gemini API failed after {max_retries} retries for test case {tc.get('tc_id')}: {last_error}")
 
 
 # ==============================================================================
@@ -316,35 +266,40 @@ def run_agent(
     """
     Public API — called by server.py directly (no CLI / subprocess needed).
     Reads input JSON file and generates artifacts inside out_dir_path/.
-    base_url is injected into the LLM prompt and fallback Selenium scripts.
+    base_url is injected into the LLM prompt and generated Selenium scripts.
 
     Writes:
       <out_dir_path>/expected.csv              — all CSV step rows
       <out_dir_path>/cucumber/<TC-ID>.feature  — Gherkin feature file
       <out_dir_path>/selenium/test_<TC-ID>.py  — Selenium Python test script
     """
-    app_base_url  = base_url or DEFAULT_BASE_URL
-    agent_base_dir = Path(__file__).parent.resolve()
+    app_base_url = base_url or DEFAULT_BASE_URL
 
-    json_path = (
-        Path(stage1_json_path)
-        if Path(stage1_json_path).is_absolute()
-        else agent_base_dir / stage1_json_path
-    )
+    if stage1_json_path:
+        json_path = (
+            Path(stage1_json_path)
+            if Path(stage1_json_path).is_absolute()
+            else WORKSPACE_ROOT / stage1_json_path
+        )
+    else:
+        json_path = DIR_OUTPUT / "parsed_output.json"
 
-    # Fallback: pick the newest JSON in output/ if the exact path is missing
+    # Fallback: pick the newest JSON in DIR_OUTPUT if the exact path is missing
     if not json_path.exists():
-        output_dir = agent_base_dir / "output"
-        candidates = sorted(output_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        candidates = sorted(DIR_OUTPUT.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         if candidates:
             json_path = candidates[0]
 
-    out_dir  = (
-        Path(out_dir_path)
-        if Path(out_dir_path).is_absolute()
-        else agent_base_dir / out_dir_path
-    )
-    csv_path = out_dir / "expected.csv"
+    if out_dir_path:
+        out_dir = (
+            Path(out_dir_path)
+            if Path(out_dir_path).is_absolute()
+            else WORKSPACE_ROOT / out_dir_path
+        )
+    else:
+        out_dir = DIR_TESTS
+
+    csv_path = out_dir / NAME_EXPECTED_CSV
     cuc_dir  = out_dir / "cucumber"
     sel_dir  = out_dir / "selenium"
 
@@ -370,17 +325,10 @@ def run_agent(
     total      = len(test_cases)
     print(f"      Loaded {total} test cases from '{data.get('project', 'unknown')}' project.")
 
-    # Initialise LLM if API key is present
-    llm = None
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        try:
-            print(f"\n[2/3] Initialising Gemini LLM ({model_name})...")
-            llm = create_gemini_llm(model_name=model_name)
-            print(f"      [OK] Connected to {model_name}")
-        except Exception as e:
-            print(f"      [WARN] LLM init error: {e}. Falling back to template mode.")
-    else:
-        print("\n[2/3] No API key found. Running in Offline Template Mode...")
+    # Strictly connect to Gemini API
+    print(f"\n[2/3] Connecting to Google Gemini API ({model_name})...")
+    llm = create_gemini_llm(model_name=model_name)
+    print(f"      [OK] Gemini LLM client initialized successfully.")
 
     # Write CSV header
     csv_headers = [
@@ -390,22 +338,16 @@ def run_agent(
     with open(csv_path, "w", newline="", encoding="utf-8") as fh:
         csv.writer(fh).writerow(csv_headers)
 
-    print(f"\n[3/3] Processing {total} test cases...\n")
+    print(f"\n[3/3] Generating artifacts via Gemini API for {total} test cases...\n")
 
     for i, tc in enumerate(test_cases, start=1):
         tc_id = tc.get("tc_id", f"TC-{i:03d}")
         title = tc.get("title", "Unnamed")
 
-        print(f"  [{i:02d}/{total}] {tc_id} — {title}")
+        print(f"  [{i:02d}/{total}] Generating artifacts for {tc_id} — {title}...")
 
-        if llm:
-            try:
-                output = generate_all_artifacts(llm, tc, base_url=app_base_url)
-            except Exception as exc:
-                print(f"         [WARN] LLM error ({exc}). Using template fallback.")
-                output = generate_fallback_artifacts(tc, base_url=app_base_url)
-        else:
-            output = generate_fallback_artifacts(tc, base_url=app_base_url)
+        # Hit Gemini API exclusively
+        output = generate_all_artifacts(llm, tc, base_url=app_base_url)
 
         # Write CSV rows
         with open(csv_path, "a", newline="", encoding="utf-8") as fh:
@@ -428,7 +370,7 @@ def run_agent(
         )
 
     print("\n" + "=" * SEPARATOR_WIDTH)
-    print("  [DONE] All test cases processed successfully!")
+    print("  [DONE] All test cases generated successfully via Gemini API!")
     print(f"      CSV written        : {csv_path}")
     print(f"      Cucumber features  : {cuc_dir}")
     print(f"      Selenium scripts   : {sel_dir}")

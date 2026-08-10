@@ -25,31 +25,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── PATHS ────────────────────────────────────────────────────────────────────
+# ─── CORE & AGENTS IMPORTS ───────────────────────────────────────────────────
 
-BASE_DIR    = Path(__file__).parent.resolve()
-AGENTS_DIR  = BASE_DIR / "agents"
-UPLOADS_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR  = BASE_DIR / "output"
-TESTS_DIR   = OUTPUT_DIR / "tests"
+from core.constants import (
+    WORKSPACE_ROOT,
+    DIR_OUTPUT,
+    DIR_TESTS,
+    DIR_UPLOADS,
+    DIR_SAMPLES,
+    DIR_AGENTS,
+    DEFAULT_SAMPLE_FRD_FILENAME,
+    DEFAULT_SAMPLE_TC_FILENAME,
+    SERVER_HOST,
+    SERVER_PORT,
+)
+from agents.doc_parser import parse_documents    # importable API function
+from agents.cs_agent import run_agent            # importable API function
+
+BASE_DIR    = WORKSPACE_ROOT
+AGENTS_DIR  = DIR_AGENTS
+UPLOADS_DIR = DIR_UPLOADS
+OUTPUT_DIR  = DIR_OUTPUT
+TESTS_DIR   = DIR_TESTS
+SAMPLES_DIR = DIR_SAMPLES
 
 # ─── SERVER CONFIG ────────────────────────────────────────────────────────────
-# Override via environment variables — no need to touch this file.
+SAMPLE_FRD_FILENAME:  str = os.environ.get("SAMPLE_FRD",  DEFAULT_SAMPLE_FRD_FILENAME)
+SAMPLE_TC_FILENAME:   str = os.environ.get("SAMPLE_TC",   DEFAULT_SAMPLE_TC_FILENAME)
 
-SERVER_HOST:          str = os.environ.get("SERVER_HOST", "127.0.0.1")
-SERVER_PORT:          int = int(os.environ.get("SERVER_PORT", "5000"))
-SAMPLE_FRD_FILENAME:  str = os.environ.get("SAMPLE_FRD",  "ShopSphere_Functional_Requirements_Document.docx")
-SAMPLE_TC_FILENAME:   str = os.environ.get("SAMPLE_TC",   "ShopSphere_Manual_Testcases.docx")
-
-for _d in (UPLOADS_DIR, OUTPUT_DIR, TESTS_DIR):
+for _d in (UPLOADS_DIR, OUTPUT_DIR, TESTS_DIR, SAMPLES_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-
-# agents/ needs to be on sys.path so its internal imports work
-if str(AGENTS_DIR) not in sys.path:
-    sys.path.insert(0, str(AGENTS_DIR))
-
-from doc_parser import parse_documents    # importable API function
-from cs_agent import run_agent            # importable API function
 
 # ─── APP ──────────────────────────────────────────────────────────────────────
 
@@ -203,6 +208,5 @@ if __name__ == "__main__":
         "server:app",
         host=SERVER_HOST,
         port=SERVER_PORT,
-        reload=True,
-        reload_includes=["server.py", "agents/*.py"],
+        reload=False,
     )

@@ -10,9 +10,17 @@ The project features a **FastAPI backend** that interfaces with Python parsing a
 
 * **Dual-Document Parsing:** Automatically extracts and links structured requirements from FRDs and manual test documents (`.docx`).
 * **Fuzzy Subject-to-Feature Mapping:** Integrates a 3-tier matching engine (substring matching, word overlap, and Levenshtein distance) to dynamically bind tests to requirements.
-* **Unified Agent Code Generation:** Utilizes a Pydantic-structured prompt chain to generate Cucumber (`.feature`), Selenium (`pytest` / `.py`), and CSV steps in a single, aligned, cost-effective LLM call.
-* **Fallback Template Engine:** Operates in offline mode generating standardized template scenarios if Gemini API credentials are not provided.
+* **Unified Single-Chain Code Generation:** Utilizes a Pydantic-structured prompt chain to generate Cucumber (`.feature`), Selenium (`pytest` / `.py`), and CSV steps in a single, aligned, cost-effective LLM call.
+* **High-Quota Gemini Intelligence:** Powered by **Google Gemini 3.5 Flash Lite** (500 RPD / 15 RPM) with automatic rate-limit backoff resilience.
 * **Web UI Dashboard:** Clean React interface tracking real-time pipeline status, stopwatch timings, test case metrics, and an in-memory ZIP package download utility.
+
+---
+
+## 📖 In-Depth Documentation
+
+Detailed technical and operational documentation is available in the [`Documentation/`](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/) directory:
+* **[Parser Agent Documentation](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/PARSER_AGENT_DOCUMENTATION.md)**: Deep dive into AST extraction, `python-docx` rationale, fuzzy matching, and context enrichment.
+* **[Tester Agent Documentation](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/TESTER_AGENT_DOCUMENTATION.md)**: Deep dive into the unified LangChain prompt chain, Gemini 3.5 Flash Lite integration, Pydantic schemas, and output artifact specifications.
 
 ---
 
@@ -20,19 +28,19 @@ The project features a **FastAPI backend** that interfaces with Python parsing a
 
 ```text
 Baxter/
+├── core/
+│   ├── constants.py      # Centralized paths, configs, regexes, and system defaults
+│   ├── models.py         # Structured Python dataclasses (DTOs) & Pydantic schemas
+│   └── __init__.py       # Core package initializer
 ├── agents/
-│   ├── constants.py      # Pre-compiled regex, table keys, and system constants
-│   ├── models.py         # Structured Python dataclasses (DTOs)
-│   ├── doc_parser.py     # Stage 1: Document Parsing & Enrichment Engine
-│   └── cs_agent.py       # Stage 2: Unified BDD & Selenium Code Generator Agent
+│   ├── doc_parser.py     # Stage 1: Document Parsing & Context Enrichment Agent
+│   ├── cs_agent.py       # Stage 2: Unified BDD & Selenium Code Generator Agent
+│   └── __init__.py       # Agents package initializer
 ├── samples/              # Default `.docx` fallback sample documents
-├── src/
-│   ├── components/       # App UI components
-│   ├── App.jsx           # Main React controller
-│   └── index.css         # Styling system
-├── server.py             # FastAPI backend orchestrating python processes
-├── vite.config.js        # React/Vite development server configurations
-└── package.json          # Node dependencies & package scripts
+├── src/                  # React UI frontend (Vite + React 19)
+├── server.py             # FastAPI backend orchestrator & REST API
+├── package.json          # Node dependencies & frontend scripts
+└── requirements.txt      # Python dependencies
 ```
 
 ---

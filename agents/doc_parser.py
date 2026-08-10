@@ -20,14 +20,27 @@ from docx.table import Table as DocxTable
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-import constants as const
-from models import (
-    FeatureModel,
-    FeatureContextModel,
-    TestCaseModel,
-    ParserSummaryModel,
-    ParsedDocumentResponse,
-)
+try:
+    import core.constants as const
+    from core.models import (
+        FeatureModel,
+        FeatureContextModel,
+        TestCaseModel,
+        ParserSummaryModel,
+        ParsedDocumentResponse,
+    )
+except ImportError:
+    _root = Path(__file__).parent.parent.resolve()
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    import core.constants as const
+    from core.models import (
+        FeatureModel,
+        FeatureContextModel,
+        TestCaseModel,
+        ParserSummaryModel,
+        ParsedDocumentResponse,
+    )
 
 
 # ─── TEXT UTILITIES ───────────────────────────────────────────────────────────
