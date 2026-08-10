@@ -15,7 +15,7 @@ export default function PipelineTracker({ stepsState }) {
     },
     {
       id: 'generation',
-      title: 'Generation of Test Cases',
+      title: 'Generation of Automated Test Scripts',
       subtitles: {
         pending: 'Pending Execution',
         running: 'Generating Selenium & Cucumber Scripts...',
