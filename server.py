@@ -8,7 +8,6 @@ Integrates doc_parser and c&s_agent with the React UI.
 import os
 import sys
 import json
-import shutil
 import subprocess
 import zipfile
 from io import BytesIO

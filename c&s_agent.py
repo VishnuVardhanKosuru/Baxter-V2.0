@@ -21,6 +21,7 @@ import json
 import csv
 import re
 import time
+import argparse
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -205,8 +206,6 @@ def generate_all_artifacts(
                 raise
     raise RuntimeError(f"Failed after {max_retries} retries for TC: {tc.get('tc_id')}")
 
-
-import argparse
 
 def generate_fallback_artifacts(tc: Dict[str, Any]) -> FullTestCaseOutput:
     """Fallback generator when GEMINI_API_KEY is not set or API is unreachable."""
