@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+sse-starlette
+litellm
+langchain-litellm
+langchain-core
+langchain-google-genai
+pydantic

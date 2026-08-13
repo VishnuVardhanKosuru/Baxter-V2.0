@@ -24,9 +24,57 @@ Usage:
 """
 
 import os
+import threading
+import datetime
+import litellm
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Cost Tracking Setup ───────────────────────────────────────────────────────
+_cost_log_lock = threading.Lock()
+COST_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output", "cost_tracking.txt")
+
+def _track_cost_callback(kwargs, completion_response, start_time, end_time):
+    """LiteLLM global callback to log tokens and cost per request safely."""
+    try:
+        import litellm
+        usage = completion_response.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        
+        # Calculate cost
+        cost = litellm.completion_cost(completion_response=completion_response)
+        if cost is None:
+            cost = 0.0
+            
+        model = completion_response.get("model", "unknown")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        api_key = kwargs.get("litellm_params", {}).get("api_key", "")
+        if api_key == os.getenv("GEMINI_API_KEY"):
+            key_alias = "Key 1"
+        elif api_key == os.getenv("GEMINI_API_KEY_2"):
+            key_alias = "Key 2"
+        elif api_key == os.getenv("GEMINI_API_KEY_3"):
+            key_alias = "Key 3"
+        else:
+            key_alias = "Unknown Key"
+            
+        phase = getattr(litellm, "current_phase", "Unknown")
+        
+        log_line = (f"[{timestamp}] [{phase}] Model: {model} ({key_alias}) | "
+                    f"Tokens: {input_tokens} In, {output_tokens} Out | "
+                    f"Cost: ${cost:.6f}\n")
+        
+        # Ensure output directory exists before writing
+        os.makedirs(os.path.dirname(COST_LOG_FILE), exist_ok=True)
+        
+        with _cost_log_lock:
+            with open(COST_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(log_line)
+    except Exception as exc:
+        print(f"[WARN] Failed to track cost: {exc}")
 
 
 def create_llm():
@@ -99,6 +147,10 @@ def create_llm():
     )
 
     # ── Wrap in LangChain-compatible ChatLiteLLMRouter ────────────────────────
+    
+    # ── Register Global Cost Tracking Callback ────────────────────────────────
+    litellm.success_callback = [_track_cost_callback]
+    
     return ChatLiteLLMRouter(
         router=router,
         model_name=f"gemini/{model_name}",  # which model_name from model_list to call

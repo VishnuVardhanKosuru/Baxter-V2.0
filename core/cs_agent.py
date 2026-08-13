@@ -40,7 +40,6 @@ except ImportError as _e:
 
 DEFAULT_MODEL:          str = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
-DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
 DEFAULT_OUTPUT_PATH:    str = "output/tests"
 MAX_LLM_RETRIES:        int = 5
 RATE_LIMIT_BASE_WAIT_S: int = 30
@@ -204,7 +203,7 @@ def generate_all_artifacts(
 # ==============================================================================
 
 def run_agent(
-    stage1_json_path: str = DEFAULT_INPUT_PATH,
+    stage1_json_path: str,
     out_dir_path: str = DEFAULT_OUTPUT_PATH,
     model_name: str = DEFAULT_MODEL,
     base_url: str = "",
@@ -227,13 +226,6 @@ def run_agent(
         if Path(stage1_json_path).is_absolute()
         else project_root / stage1_json_path
     )
-
-    # Fallback: pick the newest JSON in output/ if the exact path is missing
-    if not json_path.exists():
-        output_dir = project_root / "output"
-        candidates = sorted(output_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if candidates:
-            json_path = candidates[0]
 
     out_dir  = (
         Path(out_dir_path)
