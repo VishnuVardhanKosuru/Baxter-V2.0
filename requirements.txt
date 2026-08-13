@@ -1,0 +1,21 @@
+# Document Parser & API Server
+python-docx>=1.1.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-multipart>=0.0.9
+
+# Core LangChain & LLM Packages
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-google-genai>=2.0.0
+google-generativeai>=0.8.0
+
+# Data Modeling & Utilities
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Testing & Automation
+selenium>=4.0.0
+pytest>=7.0.0
+

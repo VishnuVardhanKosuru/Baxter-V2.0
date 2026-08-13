@@ -1,0 +1,254 @@
+﻿=== ALL NON-EMPTY PARAGRAPHS ===
+[P001] Functional Requirements Document
+[P002] ShopSphere E-Commerce Platform
+[P003] Release 2.0 ΓÇö Unified Cart, Checkout & Fulfillment Enhancement
+[P005] Table of Contents
+[P007] 1. Purpose
+[P008] This document defines the functional and non-functional requirements for Release 2.0 of the ShopSphere e-commerce platform, coveri
+[P009] The intended audience includes Product Managers, Business Analysts, Software Engineers (frontend, backend, and DevOps), QA Enginee
+[P010] 2. Scope & Applicability
+[P011] 2.1 In Scope
+[P012] Customer-facing web storefront (React 18 + Redux Toolkit), fully responsive for desktop, tablet, and mobile web.
+[P013] REST API backend (Node.js / Express) exposing catalog, cart, checkout, order, and account services.
+[P014] Persistent, cross-device shopping cart backed by Redis session cache and PostgreSQL.
+[P015] Unified two-step checkout flow with guest checkout and saved payment methods (via Stripe).
+[P016] Order management module including status tracking, cancellation, and return initiation.
+[P017] Admin Portal enhancements for inventory management, order fulfillment, and sales reporting.
+[P018] Coupon and discount engine, wishlist, and product ratings & reviews.
+[P019] Transactional notifications via email (SendGrid) and SMS (Twilio).
+[P020] 2.2 Out of Scope
+[P021] Native iOS and Android mobile applications (tracked separately on the Mobile Apps roadmap).
+[P022] Multi-vendor marketplace onboarding and seller dashboards (planned for Release 3.0).
+[P023] Loyalty points and rewards program (planned for Release 3.0).
+[P024] In-store point-of-sale (POS) integration.
+[P025] 2.3 Applicability
+[P026] This document applies to the ShopSphere web storefront (shop.shopsphere.com), the internal Admin Portal (admin.shopsphere.com), an
+[P027] 3. References
+[P028] 4. Enhancement Overview
+[P029] 4.1 Background
+[P030] The existing ShopSphere checkout is a five-step, page-reload-heavy flow that requires account creation before purchase. Analytics 
+[P031] 4.2 Proposed Enhancement
+[P032] Release 2.0 introduces a unified two-step checkout (Shipping & Payment ΓåÆ Review & Place Order) with a guest-checkout option, a per
+[P033] 4.3 Business Benefit
+[P034] Projected 25% reduction in cart abandonment based on A/B test results from the beta cohort (12% observed uplift in a 5,000-user pi
+[P035] Estimated 15% increase in checkout conversion rate from guest checkout alone.
+[P036] Reduction in "order status" support tickets by an estimated 30% via proactive real-time notifications.
+[P037] Improved average order value (AOV) through the coupon engine and wishlist-driven return visits.
+[P038] 5. Functional Specifications
+[P039] The following functional requirements define the expected system behavior for Release 2.0. Each requirement is uniquely identified
+[P040] 5.1 Requirement ID: FR-001 ΓÇö User Registration & Authentication
+[P041] 5.2 Requirement ID: FR-002 ΓÇö Product Catalog & Search
+[P042] 5.3 Requirement ID: FR-003 ΓÇö Shopping Cart Management
+[P043] 5.4 Requirement ID: FR-004 ΓÇö Checkout & Payment Processing
+[P044] 5.5 Requirement ID: FR-005 ΓÇö Order Management & Tracking
+[P045] 5.6 Requirement ID: FR-006 ΓÇö Inventory Management (Admin)
+[P046] 5.7 Requirement ID: FR-007 ΓÇö Admin Dashboard & Reporting
+[P047] 5.8 Requirement ID: FR-008 ΓÇö Wishlist & Product Reviews
+[P048] 5.9 Requirement ID: FR-009 ΓÇö Transactional Notifications
+[P049] 5.10 Requirement ID: FR-010 ΓÇö Coupon & Discount Engine
+[P050] 6. Performance
+[P051] The following non-negotiable performance targets apply to Release 2.0 under normal and peak (flash-sale) load conditions.
+[P052] 7. Interfaces with Other Systems
+[P053] 8. Non-Functional Attributes
+[P054] 8.1 Security
+[P055] All traffic encrypted in transit via TLS 1.3; data at rest encrypted with AES-256 (RDS and S3).
+[P056] PCI-DSS SAQ-A compliance maintained by tokenizing all card data via Stripe.js ΓÇö no raw card data touches ShopSphere servers.
+[P057] OWASP Top 10 mitigations enforced: parameterized queries, input sanitization, CSRF tokens, strict Content-Security-Policy headers.
+[P058] AWS WAF and rate limiting (100 requests/min per IP on auth endpoints) to mitigate brute-force and credential-stuffing attacks.
+[P059] JWT access tokens expire after 15 minutes; refresh tokens are HttpOnly, Secure, SameSite=Strict cookies.
+[P060] 8.2 Usability
+[P061] WCAG 2.1 Level AA conformance across the storefront, including keyboard navigation and screen-reader labeling.
+[P062] Mobile-first responsive design validated on the latest two major versions of Chrome, Safari, Firefox, and Edge.
+[P063] Checkout reduced to a maximum of two screens / three total clicks from cart to order confirmation.
+[P064] 8.3 Reliability
+[P065] Circuit breakers around all third-party integrations (Stripe, shipping, notifications) with graceful degradation ΓÇö e.g., checkout 
+[P066] Automated failover for the primary PostgreSQL instance with a Recovery Time Objective (RTO) of 5 minutes and Recovery Point Object
+[P067] 8.4 Scalability
+[P068] Backend services containerized and deployed on Kubernetes (EKS) with horizontal pod autoscaling based on CPU and request-queue dep
+[P069] PostgreSQL read replicas serve catalog and reporting queries; Redis Cluster handles session and cart caching to shed load from the
+[P070] 8.5 Maintainability
+[P071] CI/CD pipeline (GitHub Actions) with mandatory unit test coverage ΓëÑ 80% and automated linting/static analysis gating merges.
+[P072] Modular service boundaries (Catalog, Cart, Order, Payment, Notification) enabling independent deployment.
+[P073] Feature flags (LaunchDarkly) used for progressive rollout of checkout changes.
+[P074] 8.6 Compliance
+[P075] GDPR: supports right-to-access and right-to-erasure requests for EU customers within the mandated 30-day window.
+[P076] CCPA: provides a "Do Not Sell My Personal Information" opt-out mechanism for California residents.
+[P077] PCI-DSS v4.0: annual SAQ-A self-assessment maintained by the Security team.
+[P078] 8.7 Auditability & Logging
+[P079] Centralized structured logging via the ELK stack (Elasticsearch, Logstash, Kibana) with correlation IDs across services.
+[P080] Immutable audit trail for all order and payment state transitions, retained for 1 year in cold storage.
+[P081] Admin actions (inventory adjustments, refunds, coupon creation) logged with user identity, timestamp, and before/after values.
+[P082] 9. Glossary
+[P083] 10. Attachments
+[P084] Attachment A ΓÇö Checkout Revamp Wireframes (Figma export, PDF)
+[P085] Attachment B ΓÇö ShopSphere Entity-Relationship Diagram (v2.1)
+[P086] Attachment C ΓÇö OpenAPI 3.0 / Swagger Specification for Cart, Checkout, and Order services
+[P087] Attachment D ΓÇö Stripe Payment Sequence Diagram (PaymentIntent lifecycle)
+[P088] Attachment E ΓÇö Load & Performance Test Plan Template (JMeter)
+[P089] Attachment F ΓÇö Data Flow Diagram for GDPR/CCPA Data Subject Requests
+
+=== ALL TABLES ===
+--- Table 1 (7 rows x 2 cols) ---
+  Row 0: ['Document Version', '2.0']
+  Row 1: ['Prepared By', 'Ananya Iyer, Senior Business Analyst']
+  Row 2: ['Reviewed By', 'Karthik Rao, Engineering Lead']
+  Row 3: ['Approved By', 'Meera Nair, Director of Product']
+  Row 4: ['Date', '15-Jul-2026']
+  Row 5: ['Status', 'Final ΓÇö Approved for Development']
+  Row 6: ['Confidentiality', 'Internal Use Only ΓÇö ShopSphere Inc.']
+
+--- Table 2 (8 rows x 4 cols) ---
+  Row 0: ['#', 'Document / Source', 'Version', 'Location / Link']
+  Row 1: ['1', 'ShopSphere Business Requirements Document (BRD)', 'v3.2', 'confluence.shopsphere.internal/BRD-320']
+  Row 2: ['2', 'Checkout Revamp ΓÇö UI/UX Wireframes (Figma)', 'v1.4', 'figma.com/shopsphere/checkout-revamp']
+  Row 3: ['3', 'Stripe API Reference ΓÇö Payment Intents', '2024-06-20', 'stripe.com/docs/api']
+  Row 4: ['4', 'PCI-DSS v4.0 Compliance Checklist', 'Internal', 'confluence.shopsphere.internal/SEC-PCI-40']
+  Row 5: ['5', 'ShopSphere System Architecture Diagram', 'v2.1', 'confluence.shopsphere.internal/ARCH-210']
+  Row 6: ['6', 'WCAG 2.1 Level AA Guidelines', '2.1', 'w3.org/WAI/WCAG21/quickref']
+  Row 7: ['7', 'FedEx Web Services Developer Guide', '2025', 'developer.fedex.com']
+
+--- Table 3 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Allow new customers to create an account using email/passwor']
+  Row 1: ['Actor(s)', 'Guest User, Registered Customer']
+  Row 2: ['Pre-conditions', 'User has a valid, unused email address (for email/password r']
+  Row 3: ['Trigger', 'User selects "Sign Up" or "Log In" from the storefront heade']
+  Row 4: ['Main Flow', '1. User navigates to the Sign Up page and enters name, email']
+  Row 5: ['Alternate / Exception Flow', 'If the email already exists, the system displays "An account']
+  Row 6: ['Post-conditions', 'A new customer record exists in the users table; the user se']
+  Row 7: ['Business Rules', 'Passwords must meet complexity rules; OAuth-created accounts']
+  Row 8: ['Priority', 'High']
+
+--- Table 4 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Enable customers to browse the product catalog and search by']
+  Row 1: ['Actor(s)', 'Guest User, Registered Customer']
+  Row 2: ['Pre-conditions', 'Product catalog is indexed in Elasticsearch and synced from ']
+  Row 3: ['Trigger', 'User enters a search term or navigates to a category page.']
+  Row 4: ['Main Flow', '1. User types a keyword into the search bar; the frontend de']
+  Row 5: ['Alternate / Exception Flow', 'If zero results are found, the system displays "No products ']
+  Row 6: ['Post-conditions', 'Search results and filter facets are rendered client-side; t']
+  Row 7: ['Business Rules', 'Out-of-stock items are shown but ranked below in-stock items']
+  Row 8: ['Priority', 'High']
+
+--- Table 5 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Provide a persistent cart that survives login/logout, device']
+  Row 1: ['Actor(s)', 'Guest User, Registered Customer']
+  Row 2: ['Pre-conditions', 'Product is in stock (quantity > 0) at the time it is added.']
+  Row 3: ['Trigger', 'User clicks "Add to Cart" on a product listing or product de']
+  Row 4: ['Main Flow', '1. System checks real-time inventory via the Inventory Servi']
+  Row 5: ['Alternate / Exception Flow', 'If the requested quantity exceeds available stock, the syste']
+  Row 6: ['Post-conditions', 'The cart total (subtotal, estimated tax, item count) is reca']
+  Row 7: ['Business Rules', 'Maximum 10 units per SKU per order; cart items are re-valida']
+  Row 8: ['Priority', 'High']
+
+--- Table 6 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Provide a unified two-step checkout flow supporting guest ch']
+  Row 1: ['Actor(s)', 'Guest User, Registered Customer, Payment Gateway (Stripe)']
+  Row 2: ['Pre-conditions', 'Cart contains at least one in-stock item with a valid shippi']
+  Row 3: ['Trigger', 'User clicks "Proceed to Checkout" from the cart page.']
+  Row 4: ['Main Flow', '1. Step 1 (Shipping & Payment): user enters or selects a sav']
+  Row 5: ['Alternate / Exception Flow', 'If the card is declined, the system surfaces the Stripe decl']
+  Row 6: ['Post-conditions', 'An order record exists with status "Confirmed"; inventory is']
+  Row 7: ['Business Rules', 'All card data is tokenized client-side via Stripe.js ΓÇö raw c']
+  Row 8: ['Priority', 'High']
+
+--- Table 7 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Allow customers to view order history, track real-time fulfi']
+  Row 1: ['Actor(s)', 'Registered Customer, Guest User (via order lookup), Fulfillm']
+  Row 2: ['Pre-conditions', 'At least one order exists for the customer or guest order-lo']
+  Row 3: ['Trigger', 'User navigates to "My Orders" or clicks a tracking link from']
+  Row 4: ['Main Flow', '1. System retrieves the order and its status timeline (Confi']
+  Row 5: ['Alternate / Exception Flow', 'If the order has already moved to "Processing" or beyond, th']
+  Row 6: ['Post-conditions', 'Order status and timeline are updated; relevant notification']
+  Row 7: ['Business Rules', 'Orders can only be cancelled prior to warehouse pick-pack co']
+  Row 8: ['Priority', 'Medium']
+
+--- Table 8 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Enable Admin/Warehouse staff to manage stock levels, receive']
+  Row 1: ['Actor(s)', 'Admin User, Warehouse Staff']
+  Row 2: ['Pre-conditions', 'Admin user is authenticated with the "Inventory Manager" rol']
+  Row 3: ['Trigger', 'Admin opens the Inventory module in the Admin Portal, or a s']
+  Row 4: ['Main Flow', '1. Admin views current stock levels per SKU, filterable by w']
+  Row 5: ['Alternate / Exception Flow', 'If a stock adjustment would result in a negative quantity, t']
+  Row 6: ['Post-conditions', 'Inventory ledger reflects the adjustment with a full audit e']
+  Row 7: ['Business Rules', 'All manual adjustments require a reason code; low-stock thre']
+  Row 8: ['Priority', 'Medium']
+
+--- Table 9 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Provide Admin users with a dashboard summarizing sales, orde']
+  Row 1: ['Actor(s)', 'Admin User, Product Manager']
+  Row 2: ['Pre-conditions', 'Admin user is authenticated with a role that has reporting a']
+  Row 3: ['Trigger', 'Admin navigates to the Dashboard or Reports section of the A']
+  Row 4: ['Main Flow', '1. System displays key metrics (gross sales, order count, av']
+  Row 5: ['Alternate / Exception Flow', 'If no orders exist for the selected range, the dashboard dis']
+  Row 6: ['Post-conditions', 'Report data is rendered on screen and/or delivered as a down']
+  Row 7: ['Business Rules', 'Reporting data is refreshed hourly via a materialized view; ']
+  Row 8: ['Priority', 'Low']
+
+--- Table 10 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Allow registered customers to save products to a wishlist an']
+  Row 1: ['Actor(s)', 'Registered Customer']
+  Row 2: ['Pre-conditions', 'User is authenticated; for reviews, the user must have a del']
+  Row 3: ['Trigger', 'User clicks the heart icon on a product, or clicks "Write a ']
+  Row 4: ['Main Flow', "1. For wishlist: system adds the product to the user's saved"]
+  Row 5: ['Alternate / Exception Flow', 'If the review fails the content filter, it is routed to a ma']
+  Row 6: ['Post-conditions', 'Wishlist or review record is persisted; product aggregate ra']
+  Row 7: ['Business Rules', 'One review per customer per product; only verified purchaser']
+  Row 8: ['Priority', 'Low']
+
+--- Table 11 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Send timely, templated email and SMS notifications for key o']
+  Row 1: ['Actor(s)', 'System, SendGrid, Twilio, Registered Customer, Guest User']
+  Row 2: ['Pre-conditions', 'Customer has a valid email (all orders) and, optionally, an ']
+  Row 3: ['Trigger', 'An order lifecycle event occurs (order confirmed, payment fa']
+  Row 4: ['Main Flow', '1. System publishes an event to the internal notification qu']
+  Row 5: ['Alternate / Exception Flow', 'If a notification provider returns an error, the system retr']
+  Row 6: ['Post-conditions', 'Notification is sent (or failure logged); delivery status is']
+  Row 7: ['Business Rules', 'SMS is only sent to customers who have explicitly opted in d']
+  Row 8: ['Priority', 'Medium']
+
+--- Table 12 (9 rows x 2 cols) ---
+  Row 0: ['Description', 'Allow customers to apply promotional coupon codes at checkou']
+  Row 1: ['Actor(s)', 'Registered Customer, Guest User, Admin User (coupon creation']
+  Row 2: ['Pre-conditions', 'A valid, active coupon code exists in the system.']
+  Row 3: ['Trigger', 'User enters a coupon code in the checkout review step and cl']
+  Row 4: ['Main Flow', '1. System validates the code against expiry date, usage limi']
+  Row 5: ['Alternate / Exception Flow', 'If the code is invalid, expired, or the cart does not meet t']
+  Row 6: ['Post-conditions', 'Order total reflects the discount; coupon usage count is dec']
+  Row 7: ['Business Rules', 'Only one coupon may be applied per order; coupons cannot be ']
+  Row 8: ['Priority', 'Medium']
+
+--- Table 13 (9 rows x 2 cols) ---
+  Row 0: ['Parameter', 'Target']
+  Row 1: ['Page Load Time (95th percentile)', 'Γëñ 1.5 seconds for storefront pages on a 4G connection']
+  Row 2: ['API Response Time ΓÇö Cart Operations', 'Γëñ 500 ms (add/update/remove) at p95']
+  Row 3: ['Checkout Completion Time', 'Γëñ 3 seconds from "Place Order" click to confirmation screen ']
+  Row 4: ['Search Query Latency', 'Γëñ 300 ms for Elasticsearch queries across a catalog of up to']
+  Row 5: ['Peak Concurrent Checkout Throughput', '5,000 concurrent checkout transactions during flash-sale eve']
+  Row 6: ['Concurrent Active Sessions', '50,000 concurrent users without degradation']
+  Row 7: ['System Availability (SLA)', '99.95% monthly uptime, excluding pre-announced maintenance w']
+  Row 8: ['Nightly Inventory Sync Batch Window', 'Completes within 2 hours (02:00ΓÇô04:00 IST)']
+
+--- Table 14 (9 rows x 5 cols) ---
+  Row 0: ['Interfacing System', 'Interface Type', 'Direction', 'Data Exchanged', 'Frequency']
+  Row 1: ['Stripe', 'REST API / Webhooks', 'Bidirectional', 'Payment intents, tokens, charge & refund status', 'Real-time']
+  Row 2: ['FedEx / UPS Shipping API', 'REST API', 'Bidirectional', 'Shipping rates, label generation, tracking events', 'Real-time / Batch (label gen)']
+  Row 3: ['SendGrid', 'REST API', 'Outbound', 'Transactional email content & delivery status webhooks', 'Real-time, event-triggered']
+  Row 4: ['Twilio', 'REST API', 'Outbound', 'SMS notifications & delivery receipts', 'Real-time, event-triggered']
+  Row 5: ['Google / Facebook OAuth', 'OAuth 2.0', 'Bidirectional', 'Identity token, basic profile (name, email)', 'Real-time, on login']
+  Row 6: ['AWS S3', 'S3 API', 'Bidirectional', 'Product images, banners, generated report files', 'On-demand']
+  Row 7: ['Elasticsearch Cluster', 'REST API', 'Bidirectional', 'Product index documents, search queries', 'Near real-time (sub-minute sync)']
+  Row 8: ['Segment / Google Analytics', 'REST API / SDK', 'Outbound', 'Clickstream and conversion events', 'Real-time, event-triggered']
+
+--- Table 15 (11 rows x 2 cols) ---
+  Row 0: ['Term / Abbreviation', 'Definition']
+  Row 1: ['SKU', 'Stock Keeping Unit ΓÇö a unique identifier for each distinct p']
+  Row 2: ['JWT', 'JSON Web Token ΓÇö a signed token used to authenticate API req']
+  Row 3: ['OAuth 2.0', 'An industry-standard protocol for delegated authorization, u']
+  Row 4: ['PCI-DSS', 'Payment Card Industry Data Security Standard ΓÇö a security st']
+  Row 5: ['SLA', 'Service Level Agreement ΓÇö a commitment to a defined level of']
+  Row 6: ['WAF', 'Web Application Firewall ΓÇö filters and monitors HTTP traffic']
+  Row 7: ['Idempotency Key', 'A unique key sent with a payment request to ensure it is pro']
+  Row 8: ['Webhook', 'An HTTP callback that a third-party service (e.g., Stripe) s']
+  Row 9: ['RTO / RPO', 'Recovery Time Objective / Recovery Point Objective ΓÇö targets']
+  Row 10: ['p95', '95th percentile ΓÇö a statistical measure meaning 95% of obser']
+
