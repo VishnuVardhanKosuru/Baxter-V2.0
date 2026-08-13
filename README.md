@@ -18,7 +18,6 @@ Version 2 Parser/
 ├── Documentation/        # Comprehensive architecture & optimization documentation
 ├── input_modules/        # Directory containing subfolders with .docx FRD & Test Cases
 ├── output/               # Destination directory for generated structured JSON files
-├── frd_analysis.txt      # Reference paragraph/table AST mapping analysis
 ├── main.py               # CLI runner to execute document parsing
 ├── requirements.txt      # Python dependencies (python-docx, pydantic, etc.)
 └── .gitignore            # Git ignore configuration
