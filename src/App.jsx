@@ -4,6 +4,7 @@ import InputSection from './components/InputSection';
 import PipelineTracker from './components/PipelineTracker';
 import TestMetricsCard from './components/TestMetricsCard';
 import DownloadZipCard from './components/DownloadZipCard';
+import JiraCredentialsModal from './components/JiraCredentialsModal';
 
 export default function App() {
   const [frdFile,   setFrdFile]   = useState(null);
@@ -19,9 +20,25 @@ export default function App() {
     generation: { status: 'pending', executionTime: 0 },
   });
 
+  const [isJiraModalOpen, setIsJiraModalOpen] = useState(true);
+  const [jiraCredentials, setJiraCredentials] = useState(null);
+  const [jiraConnected, setJiraConnected] = useState(false);
+  const [activeMode, setActiveMode] = useState('manual');
+
   const timerRef = useRef(null);
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+  const handleSaveJiraCredentials = (creds) => {
+    setJiraCredentials(creds);
+    if (creds.mode === 'jira') {
+      setJiraConnected(true);
+      setActiveMode('jira');
+    } else {
+      setJiraConnected(false);
+      setActiveMode('manual');
+    }
+  };
 
   const handleRunPipeline = async () => {
     setPipelineState('running');
@@ -106,7 +123,17 @@ export default function App() {
 
   return (
     <div className="baxter-app">
-      <BaxterHeader pipelineState={pipelineState} />
+      <BaxterHeader
+        onOpenJiraModal={() => setIsJiraModalOpen(true)}
+        hasJiraCredentials={jiraConnected}
+      />
+
+      <JiraCredentialsModal
+        isOpen={isJiraModalOpen}
+        onClose={() => setIsJiraModalOpen(false)}
+        onSave={handleSaveJiraCredentials}
+        initialCredentials={jiraCredentials}
+      />
 
       <main className="baxter-main-content">
         {errorMessage && (
@@ -130,6 +157,10 @@ export default function App() {
           setExcelFile={setExcelFile}
           pipelineState={pipelineState}
           onRunPipeline={handleRunPipeline}
+          jiraConnected={jiraConnected}
+          jiraCredentials={jiraCredentials}
+          activeMode={activeMode}
+          setActiveMode={setActiveMode}
         />
 
         <div className="flow-metrics-row">
@@ -149,3 +180,5 @@ export default function App() {
     </div>
   );
 }
+
+

@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
-import { FileText, Play, UploadCloud, X, CheckCircle2 } from 'lucide-react';
+import { FileText, Play, UploadCloud, X, CheckCircle2, ShieldCheck } from 'lucide-react';
+import JiraReleaseSection from './JiraReleaseSection';
 
 export default function InputSection({
   frdFile,
@@ -7,10 +8,25 @@ export default function InputSection({
   excelFile,
   setExcelFile,
   pipelineState,
-  onRunPipeline
+  onRunPipeline,
+  jiraConnected,
+  jiraCredentials,
+  activeMode,
+  setActiveMode
 }) {
   const frdInputRef = useRef(null);
   const excelInputRef = useRef(null);
+
+  if (jiraConnected && activeMode === 'jira') {
+    return (
+      <JiraReleaseSection
+        pipelineState={pipelineState}
+        onRunPipeline={onRunPipeline}
+        onSwitchToManualUpload={() => setActiveMode('manual')}
+        jiraCredentials={jiraCredentials}
+      />
+    );
+  }
 
   const handleFrdUpload = (e) => {
     const file = e.target.files[0];
@@ -70,7 +86,7 @@ export default function InputSection({
         <div>
           <div className="baxter-card-title" style={{ fontSize: '1.1rem', marginBottom: '0.15rem' }}>
             <UploadCloud size={20} className="text-baxter-blue" />
-            Requirement &amp; Test Ingestion
+            Requirement &amp; Test Ingestion (Manual Upload)
           </div>
           <p className="baxter-card-subtitle" style={{ marginBottom: 0, fontSize: '0.825rem' }}>
             Upload your FRD document and manual test cases (.docx) to parse into the <code>output/</code> folder.
@@ -78,6 +94,18 @@ export default function InputSection({
         </div>
 
         <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center' }}>
+          {jiraConnected && (
+            <button
+              type="button"
+              className="sample-btn"
+              onClick={() => setActiveMode('jira')}
+              style={{ padding: '0.55rem 1rem', fontSize: '0.825rem', borderColor: '#BFDBFE', color: '#0033A0' }}
+            >
+              <ShieldCheck size={15} style={{ display: 'inline', marginRight: 5 }} />
+              Switch to Jira Mode
+            </button>
+          )}
+
           <button
             type="button"
             className="sample-btn"
@@ -216,4 +244,5 @@ export default function InputSection({
     </section>
   );
 }
+
 

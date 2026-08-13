@@ -1,6 +1,7 @@
 import React from 'react';
+import { ShieldCheck, CheckCircle } from 'lucide-react';
 
-export default function BaxterHeader() {
+export default function BaxterHeader({ onOpenJiraModal, hasJiraCredentials }) {
   return (
     <header className="baxter-navbar">
       <div className="baxter-navbar-container">
@@ -15,8 +16,18 @@ export default function BaxterHeader() {
           </div>
         </div>
 
-        {/* Clean Header - Brand Group Only */}
+        <div>
+          <button
+            className={`jira-header-btn ${hasJiraCredentials ? 'connected' : ''}`}
+            onClick={onOpenJiraModal}
+            title="Configure Jira Integration Credentials"
+          >
+            {hasJiraCredentials ? <CheckCircle size={16} /> : <ShieldCheck size={16} />}
+            {hasJiraCredentials ? 'Jira Connected' : 'Jira Credentials'}
+          </button>
+        </div>
       </div>
     </header>
   );
 }
+
