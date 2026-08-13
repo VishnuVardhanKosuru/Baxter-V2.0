@@ -122,3 +122,41 @@ test.describe('Baxter Sigma Spectrum - Safety & DERS Automated Suite', () => {
 
 });
 `;
+
+export const MOCK_AGENT_TELEMETRY = {
+  pricingRates: {
+    inputPer1M: 0.075,
+    outputPer1M: 0.30,
+  },
+  agents: [
+    {
+      id: "agent-doc-parser",
+      name: "Gemini Agent 1",
+      role: "FRD & Manual Test Case AST Parsing & 3-Tier Fuzzy Mapping",
+      model: "Gemini 3.5 Flash Lite",
+      inputTokens: 14850,
+      outputTokens: 2120,
+      executionStage: "Stage 1: Document Ingestion",
+    },
+    {
+      id: "agent-code-generator",
+      name: "Gemini Agent 2",
+      role: "Single-Chain Pydantic BDD Feature & Pytest Script Generation",
+      model: "Gemini 3.5 Flash Lite",
+      inputTokens: 31400,
+      outputTokens: 5840,
+      executionStage: "Stage 2: Code Generation",
+    },
+    {
+      id: "agent-jira-sync",
+      name: "Gemini Agent 3",
+      role: "Jira REST API Sync & Requirement Attachment Normalizer",
+      model: "Gemini 3.5 Flash Lite",
+      inputTokens: 9600,
+      outputTokens: 1450,
+      executionStage: "Stage 0: Jira Ingestion",
+      requiresJira: true,
+    }
+  ]
+};
+
