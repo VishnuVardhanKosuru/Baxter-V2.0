@@ -62,12 +62,12 @@ DEFAULT_OUTPUT_PATH = str(DIR_KNOWLEDGE)
 # any future model renaming does not silently break the fallback logic.
 
 AVAILABLE_MODELS: list = [
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
 ]
 
-DEFAULT_MODEL: str = os.environ.get("GEMINI_MODEL", AVAILABLE_MODELS[0])
+DEFAULT_MODEL: str = os.environ.get("LLM_MODEL", os.environ.get("GEMINI_MODEL", AVAILABLE_MODELS[0]))
 
 _default_idx   = AVAILABLE_MODELS.index(DEFAULT_MODEL) if DEFAULT_MODEL in AVAILABLE_MODELS else 0
 FALLBACK_MODEL: str = (

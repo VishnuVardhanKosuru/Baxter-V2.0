@@ -299,7 +299,7 @@ def create_llm() -> LLMBundle:
 
     Raises RuntimeError with a clear message if required env vars are missing.
     """
-    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
+    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-lite"
 
     m = model.lower()
 

@@ -45,7 +45,7 @@ def _get_env_or_default(default: str, *keys: str) -> str:
             return val
     return default
 
-DEFAULT_MODEL:          str = _get_env_or_default("gemini-2.0-flash", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
+DEFAULT_MODEL:          str = _get_env_or_default("gemini-3.1-flash-lite", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
 DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
 DEFAULT_OUTPUT_PATH:    str = "output"
