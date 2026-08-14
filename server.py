@@ -610,6 +610,162 @@ async def evaluate_jira_epic(payload: JiraEpicRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COST & TOKEN TRACKING ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+import datetime
+from collections import defaultdict
+
+COST_LOG_FILE = OUTPUT_DIR / "cost_tracking.txt"
+
+def _parse_cost_logs():
+    """Parses output/cost_tracking.txt into structured metrics."""
+    if not COST_LOG_FILE.exists():
+        return {
+            "total_cost": 0.0,
+            "total_cost_formatted": "$0.000000",
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "total_calls": 0,
+            "phases": [],
+            "entries": []
+        }
+
+    line_pattern = re.compile(
+        r"\[(.*?)\]\s+"
+        r"(?:\[(.*?)\]\s+)?"
+        r"Model:\s+(.*?)\s+\((.*?)\)\s+\|\s+"
+        r"Tokens:\s+(\d+)\s+In,\s+(\d+)\s+Out\s+\|\s+"
+        r"Cost:\s+\$([\d\.]+)"
+    )
+
+    phases_map = defaultdict(lambda: {"in": 0, "out": 0, "cost": 0.0, "calls": 0, "models": set(), "keys": set()})
+    entries = []
+    total_cost = 0.0
+    total_in = 0
+    total_out = 0
+
+    with open(COST_LOG_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            m = line_pattern.search(line)
+            if m:
+                ts = m.group(1)
+                phase = m.group(2) or "Generator"
+                model = m.group(3)
+                key_alias = m.group(4)
+                in_toks = int(m.group(5))
+                out_toks = int(m.group(6))
+                cost = float(m.group(7))
+
+                phases_map[phase]["in"] += in_toks
+                phases_map[phase]["out"] += out_toks
+                phases_map[phase]["cost"] += cost
+                phases_map[phase]["calls"] += 1
+                phases_map[phase]["models"].add(model)
+                phases_map[phase]["keys"].add(key_alias)
+
+                total_cost += cost
+                total_in += in_toks
+                total_out += out_toks
+
+                entries.append({
+                    "timestamp": ts,
+                    "phase": phase,
+                    "model": model,
+                    "key_alias": key_alias,
+                    "input_tokens": in_toks,
+                    "output_tokens": out_toks,
+                    "cost": cost
+                })
+
+    phases_list = []
+    for ph_name, pdata in phases_map.items():
+        phases_list.append({
+            "phase": ph_name,
+            "input_tokens": pdata["in"],
+            "output_tokens": pdata["out"],
+            "total_tokens": pdata["in"] + pdata["out"],
+            "cost": pdata["cost"],
+            "calls": pdata["calls"],
+            "models": list(pdata["models"]),
+            "keys": list(pdata["keys"]),
+            "cost_formatted": f"${pdata['cost']:.6f}"
+        })
+
+    return {
+        "total_cost": total_cost,
+        "total_cost_formatted": f"${total_cost:.6f}",
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "total_calls": len(entries),
+        "phases": phases_list,
+        "entries": entries[-100:]
+    }
+
+@app.get("/api/cost/metrics")
+def get_cost_metrics():
+    """Returns aggregated token usage and cost metrics."""
+    data = _parse_cost_logs()
+    return JSONResponse({"success": True, "metrics": data})
+
+@app.get("/api/cost/download-report")
+def download_cost_report():
+    """Generates and downloads the cost audit report."""
+    metrics = _parse_cost_logs()
+    
+    report_lines = [
+        "=" * 55,
+        "             BAXTER AI COST & TOKEN AUDIT REPORT",
+        "=" * 55,
+        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Total LLM API Calls: {metrics['total_calls']}",
+        f"Total Input Tokens  : {metrics['total_input_tokens']:,}",
+        f"Total Output Tokens : {metrics['total_output_tokens']:,}",
+        f"Total Combined      : {metrics['total_tokens']:,}",
+        f"Grand Total Cost    : {metrics['total_cost_formatted']}",
+        "=" * 55,
+        "",
+        "--- PHASE & AGENT BREAKDOWN ---"
+    ]
+
+    for p in metrics["phases"]:
+        report_lines.extend([
+            f"\n  [{p['phase']} Agent]",
+            f"    Total Calls   : {p['calls']}",
+            f"    Models Used   : {', '.join(p['models'])}",
+            f"    Keys Used     : {', '.join(p['keys'])}",
+            f"    Input Tokens  : {p['input_tokens']:,}",
+            f"    Output Tokens : {p['output_tokens']:,}",
+            f"    Total Tokens  : {p['total_tokens']:,}",
+            f"    Phase Cost    : {p['cost_formatted']}"
+        ])
+
+    report_lines.extend([
+        "\n" + "=" * 55,
+        "--- RECENT CALL LOGS (LATEST ENTRIES) ---"
+    ])
+    for e in metrics["entries"]:
+        report_lines.append(
+            f"[{e['timestamp']}] [{e['phase']}] Model: {e['model']} ({e['key_alias']}) | "
+            f"Tokens: {e['input_tokens']} In, {e['output_tokens']} Out | Cost: ${e['cost']:.6f}"
+        )
+    report_lines.append("=" * 55 + "\n")
+
+    report_content = "\n".join(report_lines)
+    buf = BytesIO(report_content.encode("utf-8"))
+    
+    return StreamingResponse(
+        buf,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": "attachment; filename=baxter_cost_token_report.txt"
+        }
+    )
+
 # ─── ENTRYPOINT ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

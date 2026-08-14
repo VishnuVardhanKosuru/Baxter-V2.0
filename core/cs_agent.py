@@ -37,18 +37,15 @@ except ImportError as _e:
 # Override via environment variables.
 # ==============================================================================
 
-def _require_env(*keys: str) -> str:
-    """Returns first non-empty value from the given env var names."""
+def _get_env_or_default(default: str, *keys: str) -> str:
+    """Returns first non-empty value from the given env var names, or the default."""
     for key in keys:
         val = os.environ.get(key)
         if val:
             return val
-    raise RuntimeError(
-        f"[ERROR] None of {keys} are set. Add one to your .env file.\n"
-        "  e.g. LLM_MODEL=gemini-2.5-flash-lite"
-    )
+    return default
 
-DEFAULT_MODEL:          str = _require_env("LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
+DEFAULT_MODEL:          str = _get_env_or_default("gemini-2.5-flash", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
 DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
 DEFAULT_OUTPUT_PATH:    str = "output"

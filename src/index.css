@@ -1381,3 +1381,57 @@ button {
   font-size: 0.775rem;
   font-weight: 600;
 }
+
+/* ─── AI Cost & Token Tracker Navbar Button ──────────────────────────────────── */
+.cost-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F0F7FF 100%);
+  border: 1.5px solid #BFDBFE;
+  color: #002670;
+  padding: 0.4rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.825rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 51, 160, 0.08);
+  transition: all 0.2s ease;
+}
+
+.cost-header-btn:hover {
+  background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+  border-color: #0033A0;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 51, 160, 0.16);
+}
+
+.cost-token-badge {
+  background-color: #EFF6FF;
+  border: 1px solid #93C5FD;
+  color: #0033A0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ─── Cost Modal Styles ──────────────────────────────────────────────────────── */
+.cost-modal-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  box-shadow: 0 20px 45px -10px rgba(0, 51, 160, 0.25), 0 0 0 1px rgba(0, 51, 160, 0.08);
+  overflow: hidden;
+}
+
+.btn-modal-refresh:hover:not(:disabled) {
+  background-color: #E2E8F0 !important;
+  color: #0F172A !important;
+}
+
+.btn-download-cost-report:hover {
+  background-color: #002670 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 51, 160, 0.3) !important;
+}

@@ -296,15 +296,7 @@ def create_llm() -> LLMBundle:
 
     Raises RuntimeError with a clear message if required env vars are missing.
     """
-    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL")
-    if not model:
-        raise RuntimeError(
-            "\n[ERROR] LLM_MODEL is not set in .env.\n"
-            "  Examples:\n"
-            "    LLM_MODEL=gemini-2.5-flash-lite\n"
-            "    LLM_MODEL=gpt-4.1-nano\n"
-            "    LLM_MODEL=claude-haiku-4-5\n"
-        )
+    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 
     m = model.lower()
 

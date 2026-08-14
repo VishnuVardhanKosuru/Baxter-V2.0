@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import BaxterHeader from './components/BaxterHeader';
 import InputSection from './components/InputSection';
 import PipelineTracker from './components/PipelineTracker';
 import TestMetricsCard from './components/TestMetricsCard';
 import DownloadZipCard from './components/DownloadZipCard';
 import JiraCredentialsModal from './components/JiraCredentialsModal';
+import CostMetricsModal from './components/CostMetricsModal';
 
 export default function App() {
   const [frdFile, setFrdFile] = useState(null);
@@ -21,13 +22,33 @@ export default function App() {
   });
 
   const [isJiraModalOpen, setIsJiraModalOpen] = useState(true);
+  const [isCostModalOpen, setIsCostModalOpen] = useState(false);
+  const [costMetrics, setCostMetrics] = useState(null);
+
   const [jiraCredentials, setJiraCredentials] = useState(null);
   const [jiraConnected, setJiraConnected] = useState(false);
   const [activeMode, setActiveMode] = useState('manual');
 
   const timerRef = useRef(null);
 
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  const fetchCostMetrics = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cost/metrics');
+      const data = await res.json();
+      if (data?.success) {
+        setCostMetrics(data.metrics);
+      }
+    } catch (e) {
+      console.warn('Could not fetch cost metrics:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCostMetrics();
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [fetchCostMetrics]);
 
   const handleSaveJiraCredentials = (creds) => {
     setJiraCredentials(creds);
@@ -145,6 +166,7 @@ export default function App() {
       setTotalExecutionTime(totalDuration);
       setParsedResult(s2Result);
       setPipelineState('completed');
+      fetchCostMetrics();
 
     } catch (err) {
       console.error('Pipeline error:', err);
@@ -158,6 +180,7 @@ export default function App() {
       setPipelineState('idle');
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
+      fetchCostMetrics();
     }
   };
 
@@ -166,6 +189,8 @@ export default function App() {
       <BaxterHeader
         onOpenJiraModal={() => setIsJiraModalOpen(true)}
         hasJiraCredentials={jiraConnected}
+        onOpenCostModal={() => setIsCostModalOpen(true)}
+        costMetrics={costMetrics}
       />
 
       <JiraCredentialsModal
@@ -173,6 +198,13 @@ export default function App() {
         onClose={() => setIsJiraModalOpen(false)}
         onSave={handleSaveJiraCredentials}
         initialCredentials={jiraCredentials}
+      />
+
+      <CostMetricsModal
+        isOpen={isCostModalOpen}
+        onClose={() => setIsCostModalOpen(false)}
+        metrics={costMetrics}
+        onRefresh={fetchCostMetrics}
       />
 
       <main className="baxter-main-content">
