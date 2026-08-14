@@ -148,21 +148,39 @@ def enrich_module_test_cases(
 
 
 def parse_documents(
-    modules_dir: str,
-    out_dir: str,
+    modules_dir_or_frd: str,
+    out_dir_or_tc: str,
+    target_out_dir: Optional[str] = None,
     project: str = const.DEFAULT_PROJECT_NAME,
     version: str = const.DEFAULT_VERSION,
     skip_types: Optional[List[str]] = None,
-) -> List[str]:
+) -> Any:
     """
-    Orchestrate the full multi-module parsing and mapping pipeline.
-    Utilizes multi-key LiteLLM routing across all configured API keys using async batch processing.
+    Orchestrate parsing and mapping pipeline.
+    Supports either:
+      1. parse_documents(modules_dir="input_modules", out_dir="output")
+      2. parse_documents(frd_path=".../FRD.docx", tc_path=".../TC.docx", target_out_dir="output")
     """
     skip_types = skip_types or []
-    print(f"\n[INFO] Scanning Modules Dir: {modules_dir}")
     
-    scanner = ModuleFolderScanner(Path(modules_dir))
-    packages = scanner.scan()
+    # Check if first two arguments are specific .docx files
+    if str(modules_dir_or_frd).lower().endswith(".docx") and str(out_dir_or_tc).lower().endswith(".docx"):
+        frd_p = Path(modules_dir_or_frd)
+        tc_p = Path(out_dir_or_tc)
+        out_dir = target_out_dir or "output"
+        mod_name = frd_p.stem.replace("_FRD", "").replace("FRD_", "")
+        package = ModulePackage(
+            module_folder=mod_name or "Module",
+            frd_files=[frd_p],
+            tc_files=[tc_p]
+        )
+        packages = [package]
+    else:
+        modules_dir = modules_dir_or_frd
+        out_dir = out_dir_or_tc
+        print(f"\n[INFO] Scanning Modules Dir: {modules_dir}")
+        scanner = ModuleFolderScanner(Path(modules_dir))
+        packages = scanner.scan()
     
     if not packages:
         print("[WARN] No module packages found.")
@@ -235,6 +253,7 @@ def parse_documents(
         responses = [Exception(str(e))] * len(batch_inputs)
         
     # 3. Process Responses and Generate Artifacts
+    main_parsed_path = None
     for idx, (package, ast, module_tcs) in enumerate(packages_to_process):
         response = responses[idx]
         if isinstance(response, Exception):
@@ -290,6 +309,12 @@ def parse_documents(
                 json.dump(module_payload.to_dict(), f, indent=2, ensure_ascii=False)
             print(f"  [SAVED] Module JSON saved: {module_out_path}")
             generated_files.append(module_out_path)
+
+            # Also save to root parsed_output.json for single-stage runner
+            main_out = os.path.join(out_dir, "parsed_output.json")
+            with open(main_out, "w", encoding="utf-8") as f:
+                json.dump(module_payload.to_dict(), f, indent=2, ensure_ascii=False)
+            main_parsed_path = main_out
         except Exception as e:
             print(f"  [ERROR] Failed to save module JSON {module_out_path}: {e}")
             
@@ -297,5 +322,5 @@ def parse_documents(
     print(f"  Total Module JSON files generated : {len(generated_files)}")
     print(f"  Output directory                  : {os.path.join(out_dir, 'knowledge')}")
     
-    return generated_files
+    return main_parsed_path or (generated_files[0] if generated_files else "")
 

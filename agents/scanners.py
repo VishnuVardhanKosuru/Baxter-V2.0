@@ -108,11 +108,16 @@ class ModuleFolderScanner:
         Returns:
             Ordered list of ModulePackage objects (order = filesystem order).
         """
-        packages: List[ModulePackage] = []
-        if not self.root_dir.exists():
-            print(f"[ERROR] Directory not found: {self.root_dir}")
-            return packages
+        # 1. Check if root directory itself contains FRD / TC documents
+        root_frd, root_tc = DocumentClassifier.classify_files(self.root_dir)
+        if root_frd or root_tc:
+            packages.append(ModulePackage(
+                module_folder=self.root_dir.name or "input_modules",
+                frd_files=root_frd,
+                tc_files=root_tc,
+            ))
 
+        # 2. Check each sub-folder
         for item in sorted(self.root_dir.iterdir()):   # sorted for determinism
             if item.is_dir():
                 frd_files, tc_files = DocumentClassifier.classify_files(item)

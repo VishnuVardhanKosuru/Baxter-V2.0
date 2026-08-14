@@ -80,7 +80,8 @@ export default function App() {
 
     if (activeMode === 'jira' && epicKey) {
       try {
-        const res = await fetch('/api/jira/evaluate', {
+        // ── Step 1: Download files from Jira to input_modules ─────────────
+        const jiraRes = await fetch('/api/jira/evaluate', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -91,29 +92,66 @@ export default function App() {
           },
           body: JSON.stringify({ issue_key: epicKey })
         });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.detail || data.message || 'Failed to download Jira files');
+        const jiraData = await jiraRes.json();
+        if (!jiraRes.ok || !jiraData.success) {
+          throw new Error(jiraData.detail || jiraData.message || 'Failed to download Jira files');
         }
 
-        const totalDuration = (Date.now() - startTime) / 1000;
-        setStepsState({
-          parsing: { status: 'success', executionTime: totalDuration },
-          generation: { status: 'pending', executionTime: 0 },
+        // ── Step 2: Stage 1 Document Parsing Agent ────────────────────────
+        const s1Form = new FormData();
+        s1Form.append('use_input_modules', 'true');
+
+        const s1Res = await fetch('/api/stage1-parse', {
+          method: 'POST',
+          body: s1Form,
         });
+        const s1Data = await s1Res.json();
+        if (!s1Res.ok || !s1Data.success) {
+          throw new Error(s1Data.detail || s1Data.message || 'Document Parser agent failed');
+        }
+
+        const s1Time = (Date.now() - startTime) / 1000;
+        setStepsState({
+          parsing: { status: 'success', executionTime: s1Time },
+          generation: { status: 'running', executionTime: 0 },
+        });
+
+        // ── Step 3: Stage 2 Test Generator Agent ──────────────────────────
+        const s2Res = await fetch('/api/stage2-generate', {
+          method: 'POST',
+        });
+        const s2Data = await s2Res.json();
+        if (!s2Res.ok || !s2Data.success) {
+          throw new Error(s2Data.detail || s2Data.message || 'Test Generator agent failed');
+        }
+
+        const s2Result = s2Data.result;
+        const totalDuration = (Date.now() - startTime) / 1000;
+        const s2Time = totalDuration - s1Time;
+
+        setStepsState({
+          parsing: { status: 'success', executionTime: s1Time },
+          generation: { status: 'success', executionTime: s2Time },
+        });
+
         setTotalExecutionTime(totalDuration);
-        setParsedResult({ type: 'jira_download', files: data.files });
+        setParsedResult(s2Result);
         setPipelineState('completed');
+        fetchCostMetrics();
+
       } catch (err) {
-        console.error('Jira download error:', err);
-        setErrorMessage(err.message || 'Failed to connect to backend');
+        console.error('Jira Pipeline error:', err);
+        setErrorMessage(err.message || 'Pipeline execution failed');
         setStepsState(prev => ({
-          ...prev,
-          parsing: { status: 'failed', executionTime: 0 },
+          parsing: prev.parsing.status === 'success'
+            ? prev.parsing
+            : { status: 'failed', executionTime: 0 },
+          generation: { status: 'failed', executionTime: 0 },
         }));
         setPipelineState('idle');
       } finally {
         if (timerRef.current) clearInterval(timerRef.current);
+        fetchCostMetrics();
       }
       return;
     }

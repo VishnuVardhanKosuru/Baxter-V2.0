@@ -104,34 +104,49 @@ def health_check():
 
 @app.post("/api/stage1-parse")
 async def stage1_parse(
-    frd_file:   Optional[UploadFile] = File(None),
-    tc_file:    Optional[UploadFile] = File(None),
-    use_sample: bool = Form(False),
+    frd_file:           Optional[UploadFile] = File(None),
+    tc_file:            Optional[UploadFile] = File(None),
+    use_sample:         bool = Form(False),
+    use_input_modules:  bool = Form(False),
 ):
     """
     Stage 1: Parse FRD + TC .docx files into structured JSON.
-    Returns standard JSON response.
+    Supports file uploads, sample files, or input_modules directory.
     """
-    if use_sample or (not frd_file and not tc_file):
-        sample_frd = BASE_DIR / "samples" / SAMPLE_FRD_FILENAME
-        sample_tc  = BASE_DIR / "samples" / SAMPLE_TC_FILENAME
-        if not sample_frd.exists() or not sample_tc.exists():
-            raise HTTPException(400, "Sample documents not found in workspace.")
-        frd_path, tc_path = str(sample_frd), str(sample_tc)
-    else:
-        if not frd_file or not tc_file:
-            raise HTTPException(400, "Both FRD (.docx) and Test Cases (.docx) files are required.")
-        frd_path = str(UPLOADS_DIR / frd_file.filename)
-        tc_path  = str(UPLOADS_DIR / tc_file.filename)
-        with open(frd_path, "wb") as f:
-            f.write(await frd_file.read())
-        with open(tc_path, "wb") as f:
-            f.write(await tc_file.read())
-
     try:
-        output_json_path = await asyncio.to_thread(
-            parse_documents, frd_path, tc_path, str(OUTPUT_DIR)  # doc_parser writes to OUTPUT_DIR/knowledge/ internally
-        )
+        if use_input_modules or (INPUT_MODULES_DIR.exists() and any(INPUT_MODULES_DIR.rglob("*.docx")) and not frd_file and not tc_file and not use_sample):
+            output_json_path = await asyncio.to_thread(
+                parse_documents, str(INPUT_MODULES_DIR), str(OUTPUT_DIR)
+            )
+        elif use_sample or (not frd_file and not tc_file):
+            sample_frd = BASE_DIR / "samples" / SAMPLE_FRD_FILENAME
+            sample_tc  = BASE_DIR / "samples" / SAMPLE_TC_FILENAME
+            if not sample_frd.exists() or not sample_tc.exists():
+                raise HTTPException(400, "Sample documents not found in workspace.")
+            output_json_path = await asyncio.to_thread(
+                parse_documents, str(sample_frd), str(sample_tc), str(OUTPUT_DIR)
+            )
+        else:
+            if not frd_file or not tc_file:
+                raise HTTPException(400, "Both FRD (.docx) and Test Cases (.docx) files are required.")
+            frd_path = str(UPLOADS_DIR / frd_file.filename)
+            tc_path  = str(UPLOADS_DIR / tc_file.filename)
+            with open(frd_path, "wb") as f:
+                f.write(await frd_file.read())
+            with open(tc_path, "wb") as f:
+                f.write(await tc_file.read())
+
+            output_json_path = await asyncio.to_thread(
+                parse_documents, frd_path, tc_path, str(OUTPUT_DIR)
+            )
+
+        if not output_json_path or not os.path.exists(output_json_path):
+            # Check knowledge dir
+            k_files = list((OUTPUT_DIR / "knowledge").glob("*.json"))
+            if k_files:
+                output_json_path = str(k_files[0])
+            else:
+                raise ValueError("No output JSON was generated during parsing.")
 
         try:
             with open(output_json_path, "r", encoding="utf-8") as jf:
@@ -157,7 +172,11 @@ async def stage2_generate():
     Stage 2: Generate Cucumber + Selenium test code from the parsed JSON.
     Returns standard JSON response.
     """
-    json_files = sorted(OUTPUT_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
+    json_files = sorted(
+        list(OUTPUT_DIR.glob("*.json")) + list((OUTPUT_DIR / "knowledge").glob("*.json")),
+        key=os.path.getmtime,
+        reverse=True
+    )
     if not json_files:
         raise HTTPException(400, "No parsed JSON found. Run Stage 1 first.")
 
