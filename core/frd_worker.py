@@ -135,7 +135,7 @@ class FRDWorker:
         # ── Build input dicts for abatch ──────────────────────────────────────
         inputs = [
             {
-                "tc_json":  json.dumps(tc, indent=2),
+                "tc_json":  json.dumps(tc, separators=(',', ':')),  # compact: no whitespace = fewer tokens
                 "base_url": self.base_url,
             }
             for tc in remaining
