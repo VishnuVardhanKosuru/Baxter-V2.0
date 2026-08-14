@@ -59,5 +59,8 @@ Thumbs.db
 # Runtime directories
 uploads/
 output/
+input_modules/
+**/output/
+**/input_modules/
 
 

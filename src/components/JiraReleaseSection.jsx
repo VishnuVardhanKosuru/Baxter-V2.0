@@ -1,47 +1,71 @@
 import React, { useState } from 'react';
-import { JIRA_RELEASES_DATA } from '../data/jiraMockData';
-import { 
-  FileText, 
-  ListCheck, 
-  Play, 
-  Layers, 
-  RefreshCw 
+import {
+  FileText,
+  ListCheck,
+  Play,
+  Layers,
+  Search,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
-export default function JiraReleaseSection({ 
-  pipelineState, 
-  onRunPipeline 
+export default function JiraReleaseSection({
+  pipelineState,
+  onRunPipeline,
+  jiraCredentials
 }) {
-  const [selectedReleaseId, setSelectedReleaseId] = useState('rel-1');
-  const [activeReleaseData, setActiveReleaseData] = useState(JIRA_RELEASES_DATA[0]);
-  const [isFetched, setIsFetched] = useState(true);
-  
-  // Track selected FRDs (default all 5 selected)
-  const [selectedFrdIds, setSelectedFrdIds] = useState(
-    JIRA_RELEASES_DATA[0].frds.map(f => f.id)
-  );
+  const [epicKey, setEpicKey] = useState('BANK-101');
+  const [epicData, setEpicData] = useState(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
-  const handleFetchRelease = () => {
-    const rel = JIRA_RELEASES_DATA.find(r => r.id === selectedReleaseId);
-    if (rel) {
-      setActiveReleaseData(rel);
-      setSelectedFrdIds(rel.frds.map(f => f.id));
-      setIsFetched(true);
+  // Track selected FRDs
+  const [selectedFrdIds, setSelectedFrdIds] = useState([]);
+
+  const handleFetchEpic = async () => {
+    if (!epicKey.trim()) return;
+    setIsFetching(true);
+    setFetchError(null);
+    setEpicData(null);
+    setSelectedFrdIds([]);
+
+    try {
+      const response = await fetch(`/api/jira/epic/${epicKey.trim()}`, {
+        headers: {
+          'X-Jira-Url': jiraCredentials?.url || '',
+          'X-Jira-Email': jiraCredentials?.email || '',
+          'X-Jira-Token': jiraCredentials?.apiToken || '',
+          'X-Gemini-Key': jiraCredentials?.geminiApiKey || ''
+        }
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || data.message || 'Failed to fetch epic details.');
+      }
+
+      setEpicData(data.epic);
+      setSelectedFrdIds(data.epic.frds.map(f => f.id));
+    } catch (err) {
+      console.error(err);
+      setFetchError(err.message);
+    } finally {
+      setIsFetching(false);
     }
   };
 
   const toggleFrdSelection = (id) => {
-    setSelectedFrdIds(prev => 
+    setSelectedFrdIds(prev =>
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
 
   const handleEvaluateClick = () => {
-    if (selectedFrdIds.length === 0) {
-      alert('Please select at least one FRD to evaluate.');
+    if (!epicData) {
+      alert('Please fetch an epic first.');
       return;
     }
-    onRunPipeline();
+    onRunPipeline(epicKey);
   };
 
   return (
@@ -55,7 +79,7 @@ export default function JiraReleaseSection({
 
         <button
           className="btn-run-pipeline"
-          disabled={pipelineState === 'running' || selectedFrdIds.length === 0}
+          disabled={pipelineState === 'running' || !epicData}
           onClick={handleEvaluateClick}
           style={{ padding: '0.55rem 1.25rem', fontSize: '0.875rem' }}
         >
@@ -66,65 +90,74 @@ export default function JiraReleaseSection({
 
       {/* 2-Column Grid Layout (Release Box on Left, FRS & Test Cases on Right) */}
       <div className="jira-horizontal-layout">
-        
-        {/* PART 1 (LEFT): Release Dropdown & Release Button Box */}
+
+        {/* PART 1 (LEFT): Epic Input & Fetch Button Box */}
         <div className="jira-column release-col">
           <div className="jira-section-box release-box">
             <div className="jira-col-header">
-              <Layers size={16} /> Release
+              <Search size={16} /> Fetch Epic
             </div>
 
-            <div className="release-controls-inner">
-              <select
-                id="jira-release-select"
-                className="jira-release-dropdown"
-                value={selectedReleaseId}
-                onChange={(e) => setSelectedReleaseId(e.target.value)}
-                disabled={pipelineState === 'running'}
-              >
-                {JIRA_RELEASES_DATA.map((rel) => (
-                  <option key={rel.id} value={rel.id}>
-                    {rel.name}
-                  </option>
-                ))}
-              </select>
+            <div className="release-controls-inner" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <input
+                type="text"
+                placeholder="Enter Issue Key (e.g., BANK-101)"
+                value={epicKey}
+                onChange={(e) => setEpicKey(e.target.value)}
+                disabled={isFetching || pipelineState === 'running'}
+                style={{ padding: '0.5rem', borderRadius: 6, border: '1px solid #CBD5E1', fontSize: '0.875rem' }}
+              />
 
               <button
                 type="button"
                 className="btn-fetch-release"
-                onClick={handleFetchRelease}
-                disabled={pipelineState === 'running'}
+                onClick={handleFetchEpic}
+                disabled={isFetching || pipelineState === 'running' || !epicKey.trim()}
+                style={{ marginTop: '0.5rem' }}
               >
-                <RefreshCw size={14} />
-                Release
+                {isFetching ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                {isFetching ? 'Fetching...' : 'Fetch Epic'}
               </button>
+
+              {fetchError && (
+                <div style={{ color: '#E11D48', fontSize: '0.75rem', marginTop: '0.5rem', wordBreak: 'break-word' }}>
+                  {fetchError}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* PART 2 (RIGHT): FRS / FRD Top Box & Manual Test Cases Bottom Box */}
         <div className="jira-column middle-col">
-          
+
           {/* Top Box: FRD */}
           <div className="jira-section-box frs-box">
             <div className="jira-col-header blue-header">
-              <FileText size={15} /> FRD
+              <FileText size={15} /> FRDs ({epicData?.frds?.length || 0})
             </div>
-            
-            <div className="compact-items-grid">
-              {activeReleaseData.frds.map((frd, idx) => {
+
+            <div className="compact-items-grid" style={{ maxHeight: '130px', overflowY: 'auto' }}>
+              {!epicData && !isFetching && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Enter an Epic Key to fetch FRDs.</div>}
+              {epicData && epicData.frds.length === 0 && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>No FRDs found.</div>}
+              {epicData?.frds.map((frd, idx) => {
                 const isSelected = selectedFrdIds.includes(frd.id);
                 return (
                   <label
                     key={frd.id}
                     className={`compact-item-chip ${isSelected ? 'selected' : ''}`}
+                    title={frd.name}
+                    style={{ maxWidth: '100%', minWidth: 0 }}
                   >
                     <input
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleFrdSelection(frd.id)}
+                      style={{ flexShrink: 0 }}
                     />
-                    <span>FRD {idx + 1}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                      {frd.suggested_name || frd.name}
+                    </span>
                   </label>
                 );
               })}
@@ -134,19 +167,26 @@ export default function JiraReleaseSection({
           {/* Bottom Box: Manual Test Cases */}
           <div className="jira-section-box mntc-box">
             <div className="jira-col-header blue-header">
-              <ListCheck size={15} /> Manual test cases
+              <ListCheck size={15} /> Manual test cases ({epicData?.manualTestCases?.length || 0})
             </div>
-            
-            <div className="compact-items-grid">
-              {activeReleaseData.manualTestCases.map((tc, idx) => {
-                const correspondingFrd = activeReleaseData.frds[idx];
-                const isFrdSelected = correspondingFrd && selectedFrdIds.includes(correspondingFrd.id);
+
+            <div className="compact-items-grid" style={{ maxHeight: '130px', overflowY: 'auto' }}>
+              {!epicData && !isFetching && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Enter an Epic Key to fetch test cases.</div>}
+              {epicData && epicData.manualTestCases.length === 0 && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>No Test Cases found.</div>}
+              {epicData?.manualTestCases.map((tc, idx) => {
+                // Determine if this test case is "active" based on whether any FRDs are selected.
+                // Normally you might map test cases to specific FRDs, but here we just show all test cases for the epic.
+                const isActive = selectedFrdIds.length > 0;
                 return (
                   <div
                     key={tc.id}
-                    className={`compact-item-chip tc-chip ${isFrdSelected ? 'selected' : ''}`}
+                    className={`compact-item-chip tc-chip ${isActive ? 'selected' : ''}`}
+                    title={tc.name}
+                    style={{ maxWidth: '100%', minWidth: 0 }}
                   >
-                    <span>MNTC {idx + 1}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                      {tc.suggested_name || tc.name}
+                    </span>
                   </div>
                 );
               })}

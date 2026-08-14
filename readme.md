@@ -1,113 +1,102 @@
-# Baxter 2.0 🤖
+# Baxter: Requirement & Test Case Automation Engine
 
-> **Next-Generation Autonomous AI Agent & Intelligent Workflow Framework**
+Baxter is an automated pipeline that parses Functional Requirements Documents (FRD) and Manual Test Cases, maps them using fuzzy matching algorithms, and leverages LLM agents to generate BDD Cucumber scenarios, Selenium pytest scripts, and CSV execution step matrices.
 
-Baxter 2.0 is a modern, modular, and extensible framework designed for building, orchestrating, and deploying intelligent AI agents and automated workflows.
-
----
-
-## 🌟 Key Features
-
-- ⚡ **Autonomous Execution**: Seamless task planning, tool invocation, and self-reflection loops.
-- 🧩 **Modular Plugin Architecture**: Easily plug in custom tools, memory stores, and LLM providers.
-- 🛡️ **Enterprise Ready**: Robust error handling, strict validation, and comprehensive logging.
-- 📊 **Dynamic Visualization & Monitoring**: Real-time trajectory tracking and pipeline diagnostics.
-- ⚙️ **Multi-Agent Collaboration**: Support for subagent delegation and multi-role teamwork.
+The project features a **FastAPI backend** that interfaces with Python parsing agents and a modern **React + Vite frontend** with progress metrics trackers.
 
 ---
 
-## 📁 Repository Structure
+## 🚀 Key Features
+
+* **Dual-Document Parsing:** Automatically extracts and links structured requirements from FRDs and manual test documents (`.docx`).
+* **Fuzzy Subject-to-Feature Mapping:** Integrates a 3-tier matching engine (substring matching, word overlap, and Levenshtein distance) to dynamically bind tests to requirements.
+* **Unified Single-Chain Code Generation:** Utilizes a Pydantic-structured prompt chain to generate Cucumber (`.feature`), Selenium (`pytest` / `.py`), and CSV steps in a single, aligned, cost-effective LLM call.
+* **High-Quota Gemini Intelligence:** Powered by **Google Gemini 3.5 Flash Lite** (500 RPD / 15 RPM) with automatic rate-limit backoff resilience.
+* **Web UI Dashboard:** Clean React interface tracking real-time pipeline status, stopwatch timings, test case metrics, and an in-memory ZIP package download utility.
+
+---
+
+## 📖 In-Depth Documentation
+
+Detailed technical and operational documentation is available in the [`Documentation/`](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/) directory:
+* **[Parser Agent Documentation](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/PARSER_AGENT_DOCUMENTATION.md)**: Deep dive into AST extraction, `python-docx` rationale, fuzzy matching, and context enrichment.
+* **[Tester Agent Documentation](file:///c:/Users/2862390/Desktop/New%20folder%20(3)/Baxter/Documentation/TESTER_AGENT_DOCUMENTATION.md)**: Deep dive into the unified LangChain prompt chain, Gemini 3.5 Flash Lite integration, Pydantic schemas, and output artifact specifications.
+
+---
+
+## 🛠️ Project Structure
 
 ```text
-Baxter-V2.0/
-├── core/                # Core engine, memory, and orchestration modules
-├── agents/              # Custom agent definitions and prompt templates
-├── tools/               # Built-in integrations and utility tools
-├── configs/             # Configuration files and environment settings
-├── tests/               # Unit and integration test suites
-└── README.md            # Project documentation
+Baxter/
+├── core/
+│   ├── constants.py      # Centralized paths, configs, regexes, and system defaults
+│   ├── models.py         # Structured Python dataclasses (DTOs) & Pydantic schemas
+│   └── __init__.py       # Core package initializer
+├── agents/
+│   ├── doc_parser.py     # Stage 1: Document Parsing & Context Enrichment Agent
+│   ├── cs_agent.py       # Stage 2: Unified BDD & Selenium Code Generator Agent
+│   └── __init__.py       # Agents package initializer
+├── samples/              # Default `.docx` fallback sample documents
+├── src/                  # React UI frontend (Vite + React 19)
+├── server.py             # FastAPI backend orchestrator & REST API
+├── package.json          # Node dependencies & frontend scripts
+└── requirements.txt      # Python dependencies
 ```
 
 ---
 
-## 🚀 Getting Started
+## ⚙️ Quick Start
 
 ### Prerequisites
+* **Python 3.10+**
+* **Node.js 18+**
+* **Gemini API Key** (Set as `GEMINI_API_KEY` or `GOOGLE_API_KEY` in a `.env` file)
 
-- **Python**: `3.10` or higher (or Node.js `v18+` if JS/TS runtime)
-- **Git**: Installed and configured
+### Setup Instructions
 
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/VishnuVardhanKosuru/Baxter-V2.0.git
-   cd Baxter-V2.0
-   ```
-
-2. **Create a virtual environment:**
-   ```bash
-   python -m venv venv
-   # On Windows:
-   .\venv\Scripts\activate
-   # On macOS/Linux:
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies:**
+1. **Install Python Dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
----
+2. **Install Frontend Dependencies:**
+   ```bash
+   npm install
+   ```
 
-## ⚙️ Configuration
+3. **Configure Environment Variables:**
+   Create a `.env` file in the project root to control server settings and LLM keys:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-3.1-flash-lite
+   SERVER_PORT=5000
+   SERVER_HOST=127.0.0.1
+   ```
 
-Copy the sample environment file and configure your API keys:
+### Running the Application
 
-```bash
-cp .env.example .env
-```
+To run the application locally, start the backend and frontend in separate terminals:
 
-Add your LLM API keys and service configurations in `.env`:
+* **Start the FastAPI Backend:**
+  ```bash
+  npm run server
+  # Or natively: python server.py
+  ```
+  The API will be available on [http://127.0.0.1:5000](http://127.0.0.1:5000). Logs are printed cleanly to this terminal.
 
-```env
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-LOG_LEVEL=INFO
-```
-
----
-
-## 🎯 Usage
-
-To start Baxter 2.0 in interactive CLI mode:
-
-```bash
-python main.py
-```
-
-To run a specific pipeline or script:
-
-```bash
-python -m core.pipeline --config configs/default.yaml
-```
+* **Start the React Frontend:**
+  ```bash
+  npm run dev
+  ```
+  Open the URL shown in the terminal (usually [http://localhost:5173](http://localhost:5173)) in your browser.
 
 ---
 
-## 🗺️ Roadmap
+## 🔌 API Endpoints
 
-- [ ] Multi-modal input support (Vision & Audio)
-- [ ] Distributed vector database integration
-- [ ] Real-time web UI dashboard
-- [ ] Advanced subagent swarm orchestration
+The system relies strictly on HTTP API endpoints; the internal CLI has been deprecated to guarantee clean execution boundaries.
 
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
-
----
-
-Made with ❤️ by [Vishnu Vardhan Kosuru](https://github.com/VishnuVardhanKosuru)
+* **`GET /api/health`** — Service health status check.
+* **`POST /api/stage1-parse`** — Ingests the FRD & Test Case `.docx` files, processes them, and saves the output JSON in `output/`.
+* **`POST /api/stage2-generate`** — Triggers the LLM agents to generate cucumber and selenium test suites inside `output/tests/`.
+* **`GET /api/download-zip`** — Packs the generated cucumber and selenium files into an in-memory ZIP archive stream for browser download.

@@ -7,16 +7,16 @@ import DownloadZipCard from './components/DownloadZipCard';
 import JiraCredentialsModal from './components/JiraCredentialsModal';
 
 export default function App() {
-  const [frdFile,   setFrdFile]   = useState(null);
+  const [frdFile, setFrdFile] = useState(null);
   const [excelFile, setExcelFile] = useState(null);
 
   const [pipelineState, setPipelineState] = useState('idle');
-  const [parsedResult,  setParsedResult]  = useState(null);
-  const [errorMessage,  setErrorMessage]  = useState('');
+  const [parsedResult, setParsedResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const [totalExecutionTime, setTotalExecutionTime] = useState(0);
   const [stepsState, setStepsState] = useState({
-    parsing:    { status: 'pending', executionTime: 0 },
+    parsing: { status: 'pending', executionTime: 0 },
     generation: { status: 'pending', executionTime: 0 },
   });
 
@@ -40,13 +40,13 @@ export default function App() {
     }
   };
 
-  const handleRunPipeline = async () => {
+  const handleRunPipeline = async (epicKey = null) => {
     setPipelineState('running');
     setErrorMessage('');
     setParsedResult(null);
     setTotalExecutionTime(0);
     setStepsState({
-      parsing:    { status: 'running', executionTime: 0 },
+      parsing: { status: 'running', executionTime: 0 },
       generation: { status: 'pending', executionTime: 0 },
     });
 
@@ -57,10 +57,50 @@ export default function App() {
       50,
     );
 
+    if (activeMode === 'jira' && epicKey) {
+      try {
+        const res = await fetch('/api/jira/evaluate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Jira-Url': jiraCredentials?.url || '',
+            'X-Jira-Email': jiraCredentials?.email || '',
+            'X-Jira-Token': jiraCredentials?.apiToken || '',
+            'X-Gemini-Key': jiraCredentials?.geminiApiKey || ''
+          },
+          body: JSON.stringify({ issue_key: epicKey })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.detail || data.message || 'Failed to download Jira files');
+        }
+
+        const totalDuration = (Date.now() - startTime) / 1000;
+        setStepsState({
+          parsing: { status: 'success', executionTime: totalDuration },
+          generation: { status: 'pending', executionTime: 0 },
+        });
+        setTotalExecutionTime(totalDuration);
+        setParsedResult({ type: 'jira_download', files: data.files });
+        setPipelineState('completed');
+      } catch (err) {
+        console.error('Jira download error:', err);
+        setErrorMessage(err.message || 'Failed to connect to backend');
+        setStepsState(prev => ({
+          ...prev,
+          parsing: { status: 'failed', executionTime: 0 },
+        }));
+        setPipelineState('idle');
+      } finally {
+        if (timerRef.current) clearInterval(timerRef.current);
+      }
+      return;
+    }
+
     const formData = new FormData();
     if (frdFile?.rawFile && excelFile?.rawFile) {
       formData.append('frd_file', frdFile.rawFile);
-      formData.append('tc_file',  excelFile.rawFile);
+      formData.append('tc_file', excelFile.rawFile);
     } else {
       formData.append('use_sample', 'true');
     }
@@ -75,12 +115,12 @@ export default function App() {
       if (!s1Res.ok || !s1Data.success) {
         throw new Error(s1Data.detail || s1Data.message || 'Stage 1 parsing failed');
       }
-      
+
       const s1Result = s1Data.result;
       const s1Time = (Date.now() - startTime) / 1000;
 
       setStepsState({
-        parsing:    { status: 'success', executionTime: s1Time },
+        parsing: { status: 'success', executionTime: s1Time },
         generation: { status: 'running', executionTime: 0 },
       });
 
@@ -92,16 +132,16 @@ export default function App() {
       if (!s2Res.ok || !s2Data.success) {
         throw new Error(s2Data.detail || s2Data.message || 'Stage 2 generation failed');
       }
-      
+
       const s2Result = s2Data.result;
       const totalDuration = (Date.now() - startTime) / 1000;
       const s2Time = totalDuration - s1Time;
 
       setStepsState({
-        parsing:    { status: 'success', executionTime: s1Time },
+        parsing: { status: 'success', executionTime: s1Time },
         generation: { status: 'success', executionTime: s2Time },
       });
-      
+
       setTotalExecutionTime(totalDuration);
       setParsedResult(s2Result);
       setPipelineState('completed');
@@ -110,7 +150,7 @@ export default function App() {
       console.error('Pipeline error:', err);
       setErrorMessage(err.message || 'Failed to connect to backend');
       setStepsState(prev => ({
-        parsing:    prev.parsing.status === 'success'
+        parsing: prev.parsing.status === 'success'
           ? prev.parsing
           : { status: 'failed', executionTime: 0 },
         generation: { status: 'failed', executionTime: 0 },
