@@ -45,7 +45,7 @@ def _get_env_or_default(default: str, *keys: str) -> str:
             return val
     return default
 
-DEFAULT_MODEL:          str = _get_env_or_default("gemini-2.5-flash", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
+DEFAULT_MODEL:          str = _get_env_or_default("gemini-2.0-flash", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
 DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
 DEFAULT_OUTPUT_PATH:    str = "output"
@@ -344,10 +344,24 @@ def run_agent(
 
         print(f"  [{i:02d}/{total}] {tc_id} — {title}")
 
-        try:
-            output = generate_all_artifacts(bundle, tc, base_url=app_base_url)
-        except Exception as exc:
-            print(f"         [ERROR] LLM error ({exc}). Skipping test case.")
+        output = None
+        max_retries = 4
+        for attempt in range(1, max_retries + 1):
+            try:
+                output = generate_all_artifacts(bundle, tc, base_url=app_base_url)
+                break
+            except Exception as exc:
+                err_msg = str(exc)
+                is_rate_limit = any(k in err_msg.lower() for k in ("429", "rate", "cooldown", "resourceexhausted", "deployments"))
+                if attempt < max_retries and is_rate_limit:
+                    wait_sec = attempt * 3
+                    print(f"         [RATE LIMIT] Waiting {wait_sec}s before retry ({attempt}/{max_retries})...")
+                    time.sleep(wait_sec)
+                else:
+                    print(f"         [ERROR] LLM error ({exc}). Skipping test case.")
+                    break
+
+        if not output:
             continue
 
         # Write CSV rows

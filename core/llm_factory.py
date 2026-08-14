@@ -214,8 +214,11 @@ def _build_litellm_router(model_name: str, keys: list, rpm: int, tpm: int) -> An
     router = Router(
         model_list=model_list,
         num_retries=5,                   # auto-retry on 429 / transient errors
-        retry_after=10,                  # seconds between retries
+        retry_after=5,                   # seconds between retries
         routing_strategy="least-busy",   # route to key with fewest in-flight requests
+        cooldown_time=5,                 # short cooldown so single keys recover quickly
+        allowed_fails=10,                # tolerate transient rate limits
+        timeout=120,
     )
 
     return ChatLiteLLMRouter(
@@ -296,7 +299,7 @@ def create_llm() -> LLMBundle:
 
     Raises RuntimeError with a clear message if required env vars are missing.
     """
-    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+    model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
 
     m = model.lower()
 

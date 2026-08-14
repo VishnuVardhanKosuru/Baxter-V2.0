@@ -62,8 +62,8 @@ DEFAULT_OUTPUT_PATH = str(DIR_KNOWLEDGE)
 # any future model renaming does not silently break the fallback logic.
 
 AVAILABLE_MODELS: list = [
-    "gemini-2.5-flash",
     "gemini-2.0-flash",
+    "gemini-2.5-flash",
     "gemini-1.5-flash",
 ]
 

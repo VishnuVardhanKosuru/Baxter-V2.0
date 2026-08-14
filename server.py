@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import sys
+import traceback
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -37,14 +38,16 @@ load_dotenv()
 
 # ─── PATHS ────────────────────────────────────────────────────────────────────
 
-BASE_DIR    = Path(__file__).parent.resolve()
-UPLOADS_DIR = BASE_DIR / "uploads"
+BASE_DIR          = Path(__file__).parent.resolve()
+UPLOADS_DIR       = BASE_DIR / "uploads"
+INPUT_MODULES_DIR = BASE_DIR / "input_modules"
 from core.constants import (
     DIR_OUTPUT  as OUTPUT_DIR,
     DIR_JOBS    as JOBS_DIR,
     DIR_KNOWLEDGE,
     ALLOWED_ORIGINS,
 )
+TESTS_DIR  = OUTPUT_DIR / "tests"
 AGENTS_DIR = BASE_DIR / "agents"
 
 # ─── SERVER CONFIG ────────────────────────────────────────────────────────────
@@ -54,7 +57,7 @@ SERVER_PORT:         int = int(os.environ.get("SERVER_PORT", "8000"))
 SAMPLE_FRD_FILENAME: str = os.environ.get("SAMPLE_FRD", "ShopSphere_Functional_Requirements_Document.docx")
 SAMPLE_TC_FILENAME:  str = os.environ.get("SAMPLE_TC",  "ShopSphere_Manual_Testcases.docx")
 
-for _d in (UPLOADS_DIR, OUTPUT_DIR, DIR_KNOWLEDGE, JOBS_DIR):
+for _d in (UPLOADS_DIR, OUTPUT_DIR, DIR_KNOWLEDGE, JOBS_DIR, INPUT_MODULES_DIR, TESTS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # agents/ needs to be on sys.path so its internal imports work
@@ -102,6 +105,40 @@ def health_check():
 # LEGACY ENDPOINTS (unchanged — single FRD sequential pipeline)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+def _inject_ui_gemini_key(ui_key: str | None) -> None:
+    """
+    Merge a UI-provided Gemini API key with the keys already in .env.
+    - If the key is None/empty/placeholder → do nothing (.env keys are used).
+    - If the key already exists in .env → skip it (no duplicate).
+    - If the key is new → add it as the next available GEMINI_API_KEY_N slot
+      so the LiteLLM Router can use it as an additional deployment.
+    Also resets the cached LLM mapper chain so it picks up fresh keys.
+    """
+    if not ui_key or ui_key == "your_gemini_api_key_here" or len(ui_key.strip()) < 10:
+        return
+
+    ui_key = ui_key.strip()
+    from core.llm_factory import _collect_keys
+    existing_keys = _collect_keys("GEMINI_API_KEY")
+
+    if ui_key in existing_keys:
+        return  # Already configured in .env, no action needed
+
+    # Find the next free slot
+    for i in range(1, 20):
+        suffix = "" if i == 1 else f"_{i}"
+        env_var = f"GEMINI_API_KEY{suffix}"
+        if not os.getenv(env_var):
+            os.environ[env_var] = ui_key
+            print(f" [KEY] UI Gemini API key added as {env_var} (new deployment)", flush=True)
+            break
+
+    # Reset cached LLM chains so they pick up the new key set
+    import agents.doc_parser as _dp
+    _dp._mapper_chain = None
+
+
 @app.post("/api/stage1-parse")
 async def stage1_parse(
     request:            Request,
@@ -114,9 +151,7 @@ async def stage1_parse(
     Stage 1: Parse FRD + TC .docx files into structured JSON.
     Supports file uploads, sample files, or input_modules directory.
     """
-    gemini_key = request.headers.get("x-gemini-key")
-    if gemini_key and gemini_key != "your_gemini_api_key_here":
-        os.environ["GEMINI_API_KEY"] = gemini_key
+    _inject_ui_gemini_key(request.headers.get("x-gemini-key"))
 
     print("\n" + "=" * 60, flush=True)
     print(" [STAGE 1] INGESTION & DOCUMENT PARSING AGENT STARTED", flush=True)
@@ -189,9 +224,7 @@ async def stage2_generate(request: Request):
     Stage 2: Generate Cucumber + Selenium test code from the parsed JSON.
     Returns standard JSON response.
     """
-    gemini_key = request.headers.get("x-gemini-key")
-    if gemini_key and gemini_key != "your_gemini_api_key_here":
-        os.environ["GEMINI_API_KEY"] = gemini_key
+    _inject_ui_gemini_key(request.headers.get("x-gemini-key"))
 
     print("\n" + "=" * 60, flush=True)
     print(" [STAGE 2] TEST CODE GENERATOR AGENT STARTED", flush=True)
@@ -614,8 +647,21 @@ async def evaluate_jira_epic(payload: JiraEpicRequest, request: Request):
         context = client.extract_context(raw_issue)
         analysis = analyzer.classify(context)
         
-        # Download files to input_modules
+        # Dynamic download workspace: Clean & recreate input_modules
         output_dir = BASE_DIR / "input_modules"
+        if output_dir.exists():
+            for old_file in output_dir.iterdir():
+                if old_file.is_file():
+                    try:
+                        old_file.unlink()
+                    except Exception:
+                        pass
+                elif old_file.is_dir():
+                    import shutil
+                    try:
+                        shutil.rmtree(old_file)
+                    except Exception:
+                        pass
         output_dir.mkdir(parents=True, exist_ok=True)
         
         downloaded_files = []
