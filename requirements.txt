@@ -1,0 +1,15 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+sse-starlette
+litellm
+langchain-litellm
+langchain-core
+langchain-google-genai
+pydantic>=2.0.0
+python-docx>=1.0.0
+requests>=2.31.0
+google-genai>=0.1.1
+openai>=1.0.0
+rich>=13.0.0
