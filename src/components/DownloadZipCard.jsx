@@ -1,35 +1,21 @@
 import React, { useState } from 'react';
 import { Archive, Download, Loader2 } from 'lucide-react';
-import JSZip from 'jszip';
-import { MOCK_AUTOMATED_SCRIPT_CONTENT } from '../mockData';
 
 export default function DownloadZipCard() {
   const [isZipping, setIsZipping] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   const handleDownloadZip = async () => {
     setIsZipping(true);
+    setDownloadError('');
     try {
-      // 1. Try downloading zip from backend /api/download-zip
+      // Direct streaming download of generated test suite from backend /api/download-zip
       const res = await fetch('/api/download-zip');
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `baxter_generated_tests_${Date.now()}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        return;
+      if (!res.ok) {
+        throw new Error(`Download failed with status ${res.status}`);
       }
-
-      // 2. Fallback client-side zip generation
-      const zip = new JSZip();
-      zip.file('Baxter_Automated_Suite.spec.ts', MOCK_AUTOMATED_SCRIPT_CONTENT);
-
-      const content = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(content);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `baxter_generated_tests_${Date.now()}.zip`;
@@ -38,7 +24,8 @@ export default function DownloadZipCard() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Failed to generate ZIP archive:', err);
+      console.error('Failed to download ZIP archive:', err);
+      setDownloadError('Could not download test artifacts ZIP.');
     } finally {
       setIsZipping(false);
     }
