@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 import os
 import sys
@@ -43,6 +46,15 @@ def main():
         run_agent(stage1_json_path=json_path, out_dir_path=module_out_dir)
         
     print("\nPipeline Complete!")
+
+    print("\n" + "="*60)
+    print("  Stage 3: Calculating Cost Totals")
+    print("="*60)
+    try:
+        import calculate_totals
+        calculate_totals.main()
+    except Exception as e:
+        print(f"Failed to calculate totals: {e}")
 
 if __name__ == "__main__":
     main()

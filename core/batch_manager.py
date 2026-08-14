@@ -27,11 +27,10 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from core.constants import DIR_JOBS
 from typing import Dict, List, Optional, Any
 
-from dotenv import load_dotenv
 
-load_dotenv()
 
 
 # ── Job/FRD status enum ───────────────────────────────────────────────────────
@@ -103,7 +102,7 @@ class BatchJobManager:
         Returns the job_id string.
         """
         job_id  = str(uuid.uuid4())[:8]
-        job_dir = Path("output/jobs") / job_id
+        job_dir = DIR_JOBS / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         self._jobs[job_id] = BatchJob(job_id=job_id, output_root=job_dir)
         print(f"[BATCH] Job created: {job_id} → {job_dir}")
@@ -146,16 +145,14 @@ class BatchJobManager:
         from core.llm_factory import create_llm
         from core.checkpoint import CheckpointManager
         from core.frd_worker import FRDWorker
-
-        from core.cs_agent import UNIFIED_PROMPT, FullTestCaseOutput
+        from core.cs_agent import build_chain, SYSTEM_PROMPT_TEXT
 
         job        = self._jobs[job_id]
         job.status = JobStatus.RUNNING
 
-        # ── ONE shared LLM — LiteLLM Router manages all keys centrally ──────
+        # ── ONE shared LLM bundle — provider-aware, multi-key load balanced ──
         try:
-            llm   = create_llm()
-            chain = UNIFIED_PROMPT | llm.with_structured_output(FullTestCaseOutput)
+            bundle = create_llm()
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.error  = str(exc)
@@ -163,6 +160,24 @@ class BatchJobManager:
             return
 
         base_url = os.getenv("BASE_URL", "http://localhost")
+
+        # ── Compute optimal concurrency automatically ──────────────────────────
+        # If WORKER_CONCURRENCY is explicitly set, use it.
+        # Otherwise compute from RPM × number of active keys so abatch fully
+        # utilises available quota without under- or over-shooting.
+        if os.getenv("WORKER_CONCURRENCY"):
+            concurrency = int(os.getenv("WORKER_CONCURRENCY"))
+        else:
+            from core.llm_factory import _collect_keys
+            provider    = bundle.provider
+            rpm_env     = "GEMINI_RPM" if provider == "gemini" else (
+                          "OPENAI_RPM" if provider == "openai" else "ANTHROPIC_RPM")
+            key_prefix  = "GEMINI_API_KEY" if provider == "gemini" else (
+                          "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY")
+            rpm         = int(os.getenv(rpm_env, "50"))
+            num_keys    = len(_collect_keys(key_prefix))
+            concurrency = min(rpm * num_keys, 500)   # cap at 500 to avoid memory pressure
+            print(f"[BATCH] Auto-concurrency: {rpm} RPM × {num_keys} keys = {concurrency}")
 
         # ── SEQUENTIAL: one FRD fully completes before the next starts ───────
         for frd in frd_inputs:
@@ -191,6 +206,16 @@ class BatchJobManager:
                         JobStatus.DONE if done >= total else JobStatus.RUNNING
                     )
 
+            # ── Build provider-aware chain for this FRD ───────────────────────────────────────
+            # Resolve {base_url} BEFORE caching — base_url is embedded in the system prompt
+            # and can differ per FRD, so each FRD gets its own correctly-resolved cache.
+            # Gemini: setup_cache() creates explicit CachedContent before batch.
+            # OpenAI: no-op (auto-caches >= 1024 token prefixes automatically).
+            # Anthropic: no-op (cache_control already embedded in build_chain() messages).
+            resolved_system_prompt = SYSTEM_PROMPT_TEXT.replace("{base_url}", base_url)
+            bundle.setup_cache(resolved_system_prompt)
+            chain = build_chain(bundle)
+
             checkpoint = CheckpointManager(frd_dir)
             worker = FRDWorker(
                 frd_id=frd_id,
@@ -199,13 +224,13 @@ class BatchJobManager:
                 output_dir=frd_dir,
                 chain=chain,
                 checkpoint=checkpoint,
-                concurrency=int(os.getenv("WORKER_CONCURRENCY", "50")),
+                concurrency=concurrency,
                 progress_cb=_progress_cb,
                 base_url=base_url,
             )
 
             try:
-                result = await worker.run()   # ← blocks until this FRD is fully done
+                result = await worker.run()   # blocks until this FRD is fully done
                 job.frds[frd_id].status    = JobStatus.DONE
                 job.frds[frd_id].completed = result.completed
                 job.frds[frd_id].failed    = result.failed
@@ -214,6 +239,8 @@ class BatchJobManager:
             except Exception as exc:
                 job.frds[frd_id].status = JobStatus.FAILED
                 print(f"[BATCH] {job_id}: FRD {frd_id} FAILED — {exc}")
+            finally:
+                bundle.teardown_cache()  # delete Gemini cache (no-op for OpenAI/Anthropic)
         # ── END SEQUENTIAL LOOP ───────────────────────────────────────────────
 
         job.status = JobStatus.DONE

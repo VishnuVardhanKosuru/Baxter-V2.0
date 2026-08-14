@@ -1,8 +1,39 @@
+"""
+calculate_totals.py
+-------------------
+Post-run cost aggregation script for the Baxter platform.
+
+Reads the per-call cost log written by ``core.llm_factory._track_cost_callback``
+(``output/cost_tracking.txt``) and produces a human-readable summary of total
+tokens and cost, grouped by API key alias and pipeline phase (Parser / Generator).
+
+Output: ``output/cost_totals.txt``
+
+Usage
+-----
+  python calculate_totals.py          # run standalone
+  # or called automatically at end of run_pipeline.py
+"""
+
 import os
 import re
 from collections import defaultdict
 
 def main():
+    """
+    Parse cost_tracking.txt and write an aggregated cost_totals.txt report.
+
+    Reads each log line matching the pattern:
+      [timestamp] [Phase] Model: <name> (Key N) | Tokens: X In, Y Out | Cost: $Z
+
+    Aggregates tokens and cost by (key_alias, phase) and writes a formatted
+    summary with per-key, per-phase subtotals and a grand total.
+
+    Files
+    -----
+    Input : output/cost_tracking.txt  (written by llm_factory.py)
+    Output: output/cost_totals.txt    (human-readable report)
+    """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     log_file = os.path.join(base_dir, "output", "cost_tracking.txt")
     out_file = os.path.join(base_dir, "output", "cost_totals.txt")

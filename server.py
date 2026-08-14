@@ -37,11 +37,14 @@ load_dotenv()
 # ─── PATHS ────────────────────────────────────────────────────────────────────
 
 BASE_DIR    = Path(__file__).parent.resolve()
-AGENTS_DIR  = BASE_DIR / "agents"
 UPLOADS_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR  = BASE_DIR / "output"
-TESTS_DIR   = OUTPUT_DIR / "tests"
-JOBS_DIR    = OUTPUT_DIR / "jobs"
+from core.constants import (
+    DIR_OUTPUT  as OUTPUT_DIR,
+    DIR_JOBS    as JOBS_DIR,
+    DIR_KNOWLEDGE,
+    ALLOWED_ORIGINS,
+)
+AGENTS_DIR = BASE_DIR / "agents"
 
 # ─── SERVER CONFIG ────────────────────────────────────────────────────────────
 
@@ -50,7 +53,7 @@ SERVER_PORT:         int = int(os.environ.get("SERVER_PORT", "5000"))
 SAMPLE_FRD_FILENAME: str = os.environ.get("SAMPLE_FRD", "ShopSphere_Functional_Requirements_Document.docx")
 SAMPLE_TC_FILENAME:  str = os.environ.get("SAMPLE_TC",  "ShopSphere_Manual_Testcases.docx")
 
-for _d in (UPLOADS_DIR, OUTPUT_DIR, TESTS_DIR, JOBS_DIR):
+for _d in (UPLOADS_DIR, OUTPUT_DIR, DIR_KNOWLEDGE, JOBS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # agents/ needs to be on sys.path so its internal imports work
@@ -81,7 +84,7 @@ app = FastAPI(title="Baxter Parser & Code Generator API", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -126,7 +129,7 @@ async def stage1_parse(
 
     try:
         output_json_path = await asyncio.to_thread(
-            parse_documents, frd_path, tc_path, str(OUTPUT_DIR)
+            parse_documents, frd_path, tc_path, str(OUTPUT_DIR)  # doc_parser writes to OUTPUT_DIR/knowledge/ internally
         )
 
         try:

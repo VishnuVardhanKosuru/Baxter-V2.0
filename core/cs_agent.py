@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 try:
     from dotenv import load_dotenv
     from langchain_core.prompts import ChatPromptTemplate
-    load_dotenv()
 except ImportError as _e:
     raise ImportError(
         f"Missing dependency: {_e}.\n"
@@ -38,9 +37,21 @@ except ImportError as _e:
 # Override via environment variables.
 # ==============================================================================
 
-DEFAULT_MODEL:          str = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+def _require_env(*keys: str) -> str:
+    """Returns first non-empty value from the given env var names."""
+    for key in keys:
+        val = os.environ.get(key)
+        if val:
+            return val
+    raise RuntimeError(
+        f"[ERROR] None of {keys} are set. Add one to your .env file.\n"
+        "  e.g. LLM_MODEL=gemini-2.5-flash-lite"
+    )
+
+DEFAULT_MODEL:          str = _require_env("LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
-DEFAULT_OUTPUT_PATH:    str = "output/tests"
+DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
+DEFAULT_OUTPUT_PATH:    str = "output"
 MAX_LLM_RETRIES:        int = 5
 RATE_LIMIT_BASE_WAIT_S: int = 30
 NETWORK_BASE_WAIT_S:    int = 5
@@ -107,52 +118,56 @@ def _strip_fences(text: str) -> str:
 #    One ChatPromptTemplate → one LLM call → FullTestCaseOutput (all 3 artifacts)
 # ==============================================================================
 
+# Extracted as a standalone constant so Gemini cache creation and Anthropic
+# cache_control injection can both reference the exact same text.
+SYSTEM_PROMPT_TEXT = (
+    "You are a senior QA Automation Engineer expert in BDD, Cucumber, and Selenium WebDriver.\n\n"
+    "Given a test case JSON, generate ALL THREE of the following in a single response:\n\n"
+
+    "-- ARTIFACT 1: csv_rows --\n"
+    "Expand the test case into step-by-step CSV rows (one row per step).\n"
+    "Rules:\n"
+    "- First row carries full pre-conditions; subsequent rows use 'Previous step passed'.\n"
+    "- testdata: realistic, specific values (e.g. 'email: user@test.com | password: Secure@123').\n"
+    "  For payment steps use Stripe test cards (e.g. '4242 4242 4242 4242, exp 12/26, CVC 123').\n"
+    "- evidence_required: specific proof (e.g. 'Screenshot of success toast', '200 OK on /api/auth/login').\n"
+    "- expected_result per step: granular intermediate outcome, not just the final result.\n\n"
+
+    "-- ARTIFACT 2: cucumber_feature --\n"
+    "Write a complete, production-quality Gherkin .feature file.\n"
+    "Rules:\n"
+    "- Include all cucumber_tags at the top (before Feature:).\n"
+    "- Feature name = feature_context.feature_name.\n"
+    "- Add a Background: section if there are pre_conditions.\n"
+    "- Write a Scenario (or Scenario Outline + Examples table for data-driven tests).\n"
+    "- Strict Given / When / Then / And format:\n"
+    "    Given = state setup / navigation\n"
+    "    When  = user action\n"
+    "    Then  = assertion / expected outcome\n"
+    "- Use Gherkin data tables for form inputs where appropriate.\n"
+    "- For negative scenarios, include the exact error message text.\n"
+    "- Raw .feature content only -- NO markdown fences.\n\n"
+
+    "-- ARTIFACT 3: selenium_script --\n"
+    "Write a complete Python Selenium WebDriver test script that implements\n"
+    "EVERY Gherkin step from the cucumber_feature you just wrote.\n"
+    "Rules:\n"
+    "- Use pytest as the test runner.\n"
+    "- Class name: Test<TCID> (e.g. TestTC001).\n"
+    "- setup_method: ChromeOptions, driver init, navigate to BASE_URL (from context or {base_url}).\n"
+    "- teardown_method: driver.quit() in try/finally.\n"
+    "- Test method: test_<tc_id_lowercase> (e.g. test_tc_001).\n"
+    "- Comment each block with its matching Gherkin line.\n"
+    "- Use WebDriverWait + expected_conditions -- NO time.sleep().\n"
+    "- Infer realistic CSS selectors from the test case context and subject area.\n"
+    "- Add meaningful pytest assert statements matching expected_result.\n"
+    "- Base URL for navigation: {base_url}\n"
+    "- Raw Python code only -- NO markdown fences."
+)
+
+# Standard ChatPromptTemplate used by Gemini and OpenAI chains.
 UNIFIED_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "You are a senior QA Automation Engineer expert in BDD, Cucumber, and Selenium WebDriver.\n\n"
-        "Given a test case JSON, generate ALL THREE of the following in a single response:\n\n"
-
-        "━━ ARTIFACT 1 — csv_rows ━━\n"
-        "Expand the test case into step-by-step CSV rows (one row per step).\n"
-        "Rules:\n"
-        "- First row carries full pre-conditions; subsequent rows use 'Previous step passed'.\n"
-        "- testdata: realistic, specific values (e.g. 'email: user@test.com | password: Secure@123').\n"
-        "  For payment steps use Stripe test cards (e.g. '4242 4242 4242 4242, exp 12/26, CVC 123').\n"
-        "- evidence_required: specific proof (e.g. 'Screenshot of success toast', '200 OK on /api/auth/login').\n"
-        "- expected_result per step: granular intermediate outcome, not just the final result.\n\n"
-
-        "━━ ARTIFACT 2 — cucumber_feature ━━\n"
-        "Write a complete, production-quality Gherkin .feature file.\n"
-        "Rules:\n"
-        "- Include all cucumber_tags at the top (before Feature:).\n"
-        "- Feature name = feature_context.feature_name.\n"
-        "- Add a Background: section if there are pre_conditions.\n"
-        "- Write a Scenario (or Scenario Outline + Examples table for data-driven tests).\n"
-        "- Strict Given / When / Then / And format:\n"
-        "    Given = state setup / navigation\n"
-        "    When  = user action\n"
-        "    Then  = assertion / expected outcome\n"
-        "- Use Gherkin data tables for form inputs where appropriate.\n"
-        "- For negative scenarios, include the exact error message text.\n"
-        "- Raw .feature content only — NO markdown fences.\n\n"
-
-        "━━ ARTIFACT 3 — selenium_script ━━\n"
-        "Write a complete Python Selenium WebDriver test script that implements\n"
-        "EVERY Gherkin step from the cucumber_feature you just wrote.\n"
-        "Rules:\n"
-        "- Use pytest as the test runner.\n"
-        "- Class name: Test<TCID> (e.g. TestTC001).\n"
-        "- setup_method: ChromeOptions, driver init, navigate to BASE_URL (from context or {base_url}).\n"
-        "- teardown_method: driver.quit() in try/finally.\n"
-        "- Test method: test_<tc_id_lowercase> (e.g. test_tc_001).\n"
-        "- Comment each block with its matching Gherkin line.\n"
-        "- Use WebDriverWait + expected_conditions — NO time.sleep().\n"
-        "- Infer realistic CSS selectors from the test case context and subject area.\n"
-        "- Add meaningful pytest assert statements matching expected_result.\n"
-        "- Base URL for navigation: {base_url}\n"
-        "- Raw Python code only — NO markdown fences.",
-    ),
+    ("system", SYSTEM_PROMPT_TEXT),
     (
         "human",
         "Test Case JSON:\n{tc_json}\n\n"
@@ -161,8 +176,49 @@ UNIFIED_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
+def build_chain(bundle: Any) -> Any:
+    """
+    Builds the LangChain chain for the given LLMBundle.
+
+    - Gemini / OpenAI: UNIFIED_PROMPT | llm.with_structured_output()
+      (Gemini cache is injected via setup_cache() before batch; OpenAI auto-caches)
+
+    - Anthropic: Custom chain with cache_control: ephemeral on the system message.
+      LiteLLM passes this flag to Anthropic, which caches the system prompt
+      server-side for ~5 min (auto-renews on each hit). ~90% saving on cached tokens.
+    """
+    from langchain_core.messages import SystemMessage, HumanMessage
+    from langchain_core.runnables import RunnableLambda
+
+    llm = bundle.llm
+
+    if bundle.provider == "anthropic":
+        # Anthropic requires cache_control on the system message content block.
+        # We build the chain manually using a RunnableLambda to inject this.
+        def _anthropic_chain_fn(inputs: dict) -> FullTestCaseOutput:
+            messages = [
+                SystemMessage(content=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT_TEXT.replace("{base_url}", inputs.get("base_url", "")),
+                        "cache_control": {"type": "ephemeral"},  # tells Anthropic to cache this block
+                    }
+                ]),
+                HumanMessage(content=(
+                    f"Test Case JSON:\n{inputs['tc_json']}\n\n"
+                    "Generate all three artifacts (csv_rows, cucumber_feature, selenium_script) now."
+                )),
+            ]
+            return llm.with_structured_output(FullTestCaseOutput).invoke(messages)
+
+        return RunnableLambda(_anthropic_chain_fn)
+
+    # Gemini and OpenAI use the standard ChatPromptTemplate chain
+    return UNIFIED_PROMPT | llm.with_structured_output(FullTestCaseOutput)
+
+
 def generate_all_artifacts(
-    llm: Any,
+    bundle: Any,
     tc: Dict[str, Any],
     max_retries: int = MAX_LLM_RETRIES,
     base_url: str = "",
@@ -175,10 +231,10 @@ def generate_all_artifacts(
     - CSV rows, Gherkin, and Selenium share the same understanding of the test case.
     Retries automatically on 429 RESOURCE_EXHAUSTED (rate limit) or transient network errors.
     """
-    chain = UNIFIED_PROMPT | llm.with_structured_output(FullTestCaseOutput)
+    chain = build_chain(bundle)
     for attempt in range(1, max_retries + 1):
         try:
-            return chain.invoke({"tc_json": json.dumps(tc, indent=2), "base_url": base_url or DEFAULT_BASE_URL})
+            return chain.invoke({"tc_json": json.dumps(tc, separators=(',', ':')), "base_url": base_url or DEFAULT_BASE_URL})  # compact: no whitespace = fewer tokens
         except Exception as exc:
             err = str(exc).lower()
             is_rate_limit  = "429" in err or "resource_exhausted" in err
@@ -203,7 +259,7 @@ def generate_all_artifacts(
 # ==============================================================================
 
 def run_agent(
-    stage1_json_path: str,
+    stage1_json_path: str = DEFAULT_INPUT_PATH,
     out_dir_path: str = DEFAULT_OUTPUT_PATH,
     model_name: str = DEFAULT_MODEL,
     base_url: str = "",
@@ -226,6 +282,13 @@ def run_agent(
         if Path(stage1_json_path).is_absolute()
         else project_root / stage1_json_path
     )
+
+    # Fallback: pick the newest JSON in output/ if the exact path is missing
+    if not json_path.exists():
+        output_dir = project_root / "output"
+        candidates = sorted(output_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if candidates:
+            json_path = candidates[0]
 
     out_dir  = (
         Path(out_dir_path)
@@ -263,7 +326,7 @@ def run_agent(
         print(f"\n[2/3] Initialising LiteLLM ({model_name})...")
         os.environ["GEMINI_MODEL"] = model_name
         from core.llm_factory import create_llm
-        llm = create_llm()
+        bundle = create_llm()
         print(f"      [OK] Connected to LiteLLM router")
     except Exception as e:
         raise RuntimeError(f"[ERROR] LLM init failed: {e}. An API key is required.") from e
@@ -285,7 +348,7 @@ def run_agent(
         print(f"  [{i:02d}/{total}] {tc_id} — {title}")
 
         try:
-            output = generate_all_artifacts(llm, tc, base_url=app_base_url)
+            output = generate_all_artifacts(bundle, tc, base_url=app_base_url)
         except Exception as exc:
             print(f"         [ERROR] LLM error ({exc}). Skipping test case.")
             continue
