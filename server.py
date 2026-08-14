@@ -490,12 +490,8 @@ def batch_download_frd(job_id: str, frd_id: str):
 # JIRA INGESTION & ATTACHMENT EVALUATION ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-JIRA_DIR = BASE_DIR / "jira-sreeja"
-if str(JIRA_DIR) not in sys.path:
-    sys.path.insert(0, str(JIRA_DIR))
-
 try:
-    from jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
+    from agents.jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
     JIRA_AVAILABLE = True
 except ImportError:
     JIRA_AVAILABLE = False

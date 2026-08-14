@@ -1,4 +1,6 @@
 """
+agents/jira_prompts.py
+----------------------
 System prompts and LLM instruction templates for the Jira Agent.
 """
 
@@ -30,4 +32,3 @@ Return ONLY valid JSON:
     }
   ]
 }"""
-

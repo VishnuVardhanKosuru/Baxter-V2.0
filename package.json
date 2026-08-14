@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "python jira-sreeja/server.py",
+    "server": "python server.py",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

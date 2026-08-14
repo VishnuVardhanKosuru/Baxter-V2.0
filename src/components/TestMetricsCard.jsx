@@ -40,7 +40,7 @@ export default function TestMetricsCard({ pipelineState, parsedResult }) {
             <FolderCheck size={16} color="#0033A0" /> Saved Location
           </span>
           <span style={{ fontSize: '0.825rem', fontWeight: 700, color: '#0033A0', fontFamily: 'monospace' }}>
-            jira-sreeja/input_modules/
+            input_modules/
           </span>
         </div>
       </section>

@@ -1,12 +1,14 @@
 """
-agents package — Document Parser Agent.
+agents package — Document Parser, Scanner, and Jira Ingestion Agents.
 """
 
 from .doc_parser import parse_documents
+from .jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
 
-try:
-    from .cs_agent import run_agent
-    __all__ = ["parse_documents", "run_agent"]
-except ImportError:
-    __all__ = ["parse_documents"]
+__all__ = [
+    "parse_documents",
+    "JiraClient",
+    "LLMAnalyzer",
+    "sanitize_filename",
+]
 

@@ -1,10 +1,18 @@
+"""
+agents/jira_agent.py
+--------------------
+Production Jira FRD & Manual Test Cases Fetcher Agent.
+Handles Jira Cloud REST API communication, attachment extraction,
+and AI classification of requirements and manual test suites.
+"""
+
 import os
 import re
 import json
 import time
 import argparse
-import requests
 from typing import Dict, List, Any, Optional
+import requests
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -14,7 +22,10 @@ from rich.panel import Panel
 load_dotenv()
 console = Console()
 
-from prompts import SYSTEM_PROMPT
+try:
+    from agents.jira_prompts import SYSTEM_PROMPT
+except ImportError:
+    from jira_prompts import SYSTEM_PROMPT
 
 
 def sanitize_filename(name: str) -> str:
@@ -191,7 +202,7 @@ class LLMAnalyzer:
         start, end = json_str.find("{"), json_str.rfind("}")
         return json.loads(json_str[start:end + 1])
 
-    def classify_single_file(self, filename: str, issue_key: str, feature_name: str) -> Dict[str, str]:
+    def classify_single_file(self, filename: str, issue_key: str = "", feature_name: str = "") -> Dict[str, str]:
         """Unified rule-based classifier for a single file attachment."""
         lower_fname = filename.lower()
 
@@ -279,12 +290,9 @@ def process_issue(client: JiraClient, analyzer: LLMAnalyzer, issue_key: str, out
         else:
             cat = item.get("category", "OTHER")
 
-        # Save using exact original filename uploaded to Jira (no issue key / SCRUM ID prefix)
         sug_name = fname
-
         folder = "frd" if cat == "FRD" else ("testcases" if cat == "MANUAL_TEST_CASES" else "other")
 
-        # Collision avoidance logic
         stem, ext = os.path.splitext(sug_name)
         counter = 1
         curr_sug = sug_name
@@ -305,7 +313,6 @@ def process_issue(client: JiraClient, analyzer: LLMAnalyzer, issue_key: str, out
             console.print(f"  [bold red][-] Failed to download {fname}:[/bold red] {e}")
 
     console.print(table)
-
 
 
 def run_mock_demo(output_dir: str):
