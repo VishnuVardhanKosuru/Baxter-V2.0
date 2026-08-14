@@ -103,6 +103,9 @@ export default function App() {
 
         const s1Res = await fetch('/api/stage1-parse', {
           method: 'POST',
+          headers: {
+            'X-Gemini-Key': jiraCredentials?.geminiApiKey || '',
+          },
           body: s1Form,
         });
         const s1Data = await s1Res.json();
@@ -119,6 +122,9 @@ export default function App() {
         // ── Step 3: Stage 2 Test Generator Agent ──────────────────────────
         const s2Res = await fetch('/api/stage2-generate', {
           method: 'POST',
+          headers: {
+            'X-Gemini-Key': jiraCredentials?.geminiApiKey || '',
+          },
         });
         const s2Data = await s2Res.json();
         if (!s2Res.ok || !s2Data.success) {
@@ -168,6 +174,9 @@ export default function App() {
       // ── Stage 1: Document Parsing ───────────────────────────────────────
       const s1Res = await fetch('/api/stage1-parse', {
         method: 'POST',
+        headers: {
+          'X-Gemini-Key': jiraCredentials?.geminiApiKey || '',
+        },
         body: formData,
       });
       const s1Data = await s1Res.json();
@@ -186,6 +195,9 @@ export default function App() {
       // ── Stage 2: Test Code Generation ──────────────────────────────────
       const s2Res = await fetch('/api/stage2-generate', {
         method: 'POST',
+        headers: {
+          'X-Gemini-Key': jiraCredentials?.geminiApiKey || '',
+        },
       });
       const s2Data = await s2Res.json();
       if (!s2Res.ok || !s2Data.success) {

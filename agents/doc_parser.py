@@ -27,6 +27,7 @@ from core.models import (
     ModuleOverviewModel,
     MappedContextModel,
     BatchMappingResponse,
+    TestCaseMapping,
     MappedRef,
     FeatureContextModel,
     ParserSummaryModel,
@@ -50,13 +51,47 @@ MAPPER_PROMPT = ChatPromptTemplate.from_messages([
 _mapper_chain = None
 
 def _get_mapper_chain():
-    """Lazy initialization of the multi-key LiteLLM mapper chain."""
+    """Lazy initialization of the multi-key LiteLLM mapper chain with fallback resilience."""
     global _mapper_chain
     if _mapper_chain is None:
-        bundle = create_llm()
-        llm = bundle.llm if hasattr(bundle, "llm") else bundle
-        _mapper_chain = MAPPER_PROMPT | llm.with_structured_output(BatchMappingResponse)
+        try:
+            bundle = create_llm()
+            llm = bundle.llm if hasattr(bundle, "llm") else bundle
+            _mapper_chain = MAPPER_PROMPT | llm.with_structured_output(BatchMappingResponse)
+        except Exception as e:
+            print(f"[WARN] LLM mapper init warning: {e}. Fallback mapping will be used.")
+            return None
     return _mapper_chain
+
+
+def _generate_fallback_mappings(module_tcs: List[TestCaseModel], ast: DocumentAST) -> BatchMappingResponse:
+    """Fallback keyword/subject mapper when LLM is unavailable or rate limited."""
+    mappings = []
+    section_ids = [s.section_id for s in ast.sections if s.section_id]
+    
+    for tc in module_tcs:
+        matched_refs = []
+        tc_text = f"{tc.title} {tc.subject} {' '.join(tc.steps)}".lower()
+        
+        for sec in ast.sections:
+            words = [w for w in sec.title.lower().split() if len(w) > 3]
+            if any(w in tc_text for w in words):
+                matched_refs.append(MappedRef(
+                    ref_id=sec.section_id,
+                    confidence=0.85,
+                    reason=f"Matched keywords with FRD section: {sec.title}"
+                ))
+        
+        if not matched_refs and section_ids:
+            matched_refs.append(MappedRef(
+                ref_id=section_ids[0],
+                confidence=0.70,
+                reason="Default requirement mapping"
+            ))
+            
+        mappings.append(TestCaseMapping(tc_id=tc.tc_id, mapped_refs=matched_refs))
+        
+    return BatchMappingResponse(mappings=mappings)
 
 
 def build_compact_section_index(ast: DocumentAST) -> str:
@@ -234,35 +269,39 @@ def parse_documents(
         return []
         
     # 2. Async Batch Mapping
-    from core.llm_factory import _collect_keys
-    rpm = int(os.getenv("GEMINI_RPM", "50"))
-    num_keys = len(_collect_keys("GEMINI_API_KEY"))
-    concurrency = min(rpm * num_keys, 500) if num_keys > 0 else rpm
-    
-    print(f"\n[GEMINI] Batch Mapping {len(batch_inputs)} Modules Concurrently (Concurrency: {concurrency})...")
-    
+    responses = []
     chain = _get_mapper_chain()
     
-    async def _async_map_all():
-        return await chain.abatch(batch_inputs, config={"max_concurrency": concurrency}, return_exceptions=True)
+    if chain is not None:
+        from core.llm_factory import _collect_keys
+        rpm = int(os.getenv("GEMINI_RPM", "50"))
+        num_keys = len(_collect_keys("GEMINI_API_KEY"))
+        concurrency = min(rpm * num_keys, 500) if num_keys > 0 else rpm
         
-    try:
-        responses = asyncio.run(_async_map_all())
-    except Exception as e:
-        print(f"[ERROR] Batch LLM Mapping failed: {e}")
-        responses = [Exception(str(e))] * len(batch_inputs)
+        print(f"\n[GEMINI] Batch Mapping {len(batch_inputs)} Modules Concurrently (Concurrency: {concurrency})...", flush=True)
+        
+        async def _async_map_all():
+            return await chain.abatch(batch_inputs, config={"max_concurrency": concurrency}, return_exceptions=True)
+            
+        try:
+            responses = asyncio.run(_async_map_all())
+        except Exception as e:
+            print(f"[ERROR] Batch LLM Mapping failed: {e}. Using fallback heuristic mapping.", flush=True)
+            responses = [Exception(str(e))] * len(batch_inputs)
+    else:
+        responses = [Exception("No LLM key configured")] * len(batch_inputs)
         
     # 3. Process Responses and Generate Artifacts
     main_parsed_path = None
     for idx, (package, ast, module_tcs) in enumerate(packages_to_process):
-        response = responses[idx]
-        if isinstance(response, Exception):
-            print(f"\n[ERROR] Mapping failed for {package.module_folder}: {response}")
-            mapping_response = BatchMappingResponse(mappings=[])
+        response = responses[idx] if idx < len(responses) else Exception("Missing response")
+        if isinstance(response, Exception) or not hasattr(response, "mappings") or not response.mappings:
+            print(f"\n[FALLBACK] Applying heuristic requirement mapping for {package.module_folder}...", flush=True)
+            mapping_response = _generate_fallback_mappings(module_tcs, ast)
         else:
             mapping_response = response
             
-        print(f"\n[ENRICH] Merging Context for {package.module_folder}...")
+        print(f"\n[ENRICH] Merging Context for {package.module_folder}...", flush=True)
         enriched = enrich_module_test_cases(module_tcs, mapping_response, ast)
         
         overview = ModuleOverviewModel()

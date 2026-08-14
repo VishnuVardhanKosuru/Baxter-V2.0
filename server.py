@@ -104,6 +104,7 @@ def health_check():
 
 @app.post("/api/stage1-parse")
 async def stage1_parse(
+    request:            Request,
     frd_file:           Optional[UploadFile] = File(None),
     tc_file:            Optional[UploadFile] = File(None),
     use_sample:         bool = Form(False),
@@ -113,14 +114,23 @@ async def stage1_parse(
     Stage 1: Parse FRD + TC .docx files into structured JSON.
     Supports file uploads, sample files, or input_modules directory.
     """
+    gemini_key = request.headers.get("x-gemini-key")
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        os.environ["GEMINI_API_KEY"] = gemini_key
+
+    print("\n" + "=" * 60, flush=True)
+    print(" [STAGE 1] INGESTION & DOCUMENT PARSING AGENT STARTED", flush=True)
+    print("=" * 60, flush=True)
     try:
         if use_input_modules or (INPUT_MODULES_DIR.exists() and any(INPUT_MODULES_DIR.rglob("*.docx")) and not frd_file and not tc_file and not use_sample):
+            print(f" [STAGE 1] Parsing all modules from directory: {INPUT_MODULES_DIR}", flush=True)
             output_json_path = await asyncio.to_thread(
                 parse_documents, str(INPUT_MODULES_DIR), str(OUTPUT_DIR)
             )
         elif use_sample or (not frd_file and not tc_file):
             sample_frd = BASE_DIR / "samples" / SAMPLE_FRD_FILENAME
             sample_tc  = BASE_DIR / "samples" / SAMPLE_TC_FILENAME
+            print(f" [STAGE 1] Using sample documents: {sample_frd.name} & {sample_tc.name}", flush=True)
             if not sample_frd.exists() or not sample_tc.exists():
                 raise HTTPException(400, "Sample documents not found in workspace.")
             output_json_path = await asyncio.to_thread(
@@ -131,6 +141,7 @@ async def stage1_parse(
                 raise HTTPException(400, "Both FRD (.docx) and Test Cases (.docx) files are required.")
             frd_path = str(UPLOADS_DIR / frd_file.filename)
             tc_path  = str(UPLOADS_DIR / tc_file.filename)
+            print(f" [STAGE 1] Parsing uploaded files: {frd_file.filename} & {tc_file.filename}", flush=True)
             with open(frd_path, "wb") as f:
                 f.write(await frd_file.read())
             with open(tc_path, "wb") as f:
@@ -141,7 +152,6 @@ async def stage1_parse(
             )
 
         if not output_json_path or not os.path.exists(output_json_path):
-            # Check knowledge dir
             k_files = list((OUTPUT_DIR / "knowledge").glob("*.json"))
             if k_files:
                 output_json_path = str(k_files[0])
@@ -154,6 +164,10 @@ async def stage1_parse(
         except Exception:
             parsed_data = {}
 
+        print(f" [STAGE 1] SUCCESS -> Output: {output_json_path}", flush=True)
+        print(f"           Extracted Test Cases: {len(parsed_data.get('test_cases', []))}", flush=True)
+        print("=" * 60 + "\n", flush=True)
+
         return JSONResponse({
             "success": True,
             "result": {
@@ -163,15 +177,25 @@ async def stage1_parse(
             }
         })
     except Exception as exc:
+        print(f" [STAGE 1 ERROR] {exc}", flush=True)
+        traceback.print_exc()
+        print("=" * 60 + "\n", flush=True)
         return JSONResponse({"success": False, "detail": str(exc)}, status_code=500)
 
 
 @app.post("/api/stage2-generate")
-async def stage2_generate():
+async def stage2_generate(request: Request):
     """
     Stage 2: Generate Cucumber + Selenium test code from the parsed JSON.
     Returns standard JSON response.
     """
+    gemini_key = request.headers.get("x-gemini-key")
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        os.environ["GEMINI_API_KEY"] = gemini_key
+
+    print("\n" + "=" * 60, flush=True)
+    print(" [STAGE 2] TEST CODE GENERATOR AGENT STARTED", flush=True)
+    print("=" * 60, flush=True)
     json_files = sorted(
         list(OUTPUT_DIR.glob("*.json")) + list((OUTPUT_DIR / "knowledge").glob("*.json")),
         key=os.path.getmtime,
@@ -181,6 +205,7 @@ async def stage2_generate():
         raise HTTPException(400, "No parsed JSON found. Run Stage 1 first.")
 
     latest_json = json_files[0]
+    print(f" [STAGE 2] Target Knowledge Input: {latest_json}", flush=True)
 
     try:
         await asyncio.to_thread(
@@ -202,6 +227,9 @@ async def stage2_generate():
         cuc_dir     = TESTS_DIR / "cucumber"
         selenium_count = len(list(sel_dir.glob("*.py")))      if sel_dir.exists() else total_tc
         cucumber_count = len(list(cuc_dir.glob("*.feature"))) if cuc_dir.exists() else total_tc
+
+        print(f" [STAGE 2] SUCCESS -> Generated {total_tc} Tests ({cucumber_count} Cucumber, {selenium_count} Selenium)", flush=True)
+        print("=" * 60 + "\n", flush=True)
 
         return JSONResponse({
             "success": True,
