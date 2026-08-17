@@ -20,7 +20,9 @@ is empty too, the API returns a `400` telling the user to upload documents.
 
 ## Expected document structure
 
-The parser relies on document structure, not on exact wording.
+The parser relies on document structure, not on exact wording — see
+[`Documentation/parser_pipeline_detail.md`](../Documentation/parser_pipeline_detail.md)
+for the full walkthrough.
 
 **FRD** — Word `Heading` styles delimit sections. A section whose heading contains
 `Requirement ID:` becomes a functional requirement; an adjacent two-column table
