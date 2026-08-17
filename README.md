@@ -225,9 +225,3 @@ back to the corresponding `.env` values.
 
 ---
 
-## In-Depth Documentation
-
-* [`Documentation/parser_pipeline_detail.md`](Documentation/parser_pipeline_detail.md) —
-  the `.docx` to knowledge JSON pipeline, step by step.
-* [`Documentation/cost_calculation_detail.md`](Documentation/cost_calculation_detail.md) —
-  how token usage and cost are intercepted, logged, and aggregated.
