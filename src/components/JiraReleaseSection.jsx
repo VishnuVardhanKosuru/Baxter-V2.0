@@ -196,7 +196,16 @@ export default function JiraReleaseSection({
                 {isDropdownOpen && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, marginTop: 4, zIndex: 10, maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}>
                     {availableEpics
-                      .filter(epic => epic.key.toLowerCase().includes(searchQuery.toLowerCase()))
+                      .filter(epic => {
+                        // Show all epics when the search matches an already-selected key
+                        // (i.e., user hasn't typed a custom filter). Only filter when
+                        // the user is actively narrowing the list.
+                        const q = searchQuery.trim().toLowerCase();
+                        if (!q) return true;
+                        const isSelectedKey = availableEpics.some(e => e.key.toLowerCase() === q);
+                        if (isSelectedKey) return true;
+                        return epic.key.toLowerCase().includes(q) || (epic.summary || '').toLowerCase().includes(q);
+                      })
                       .map(epic => (
                       <div
                         key={epic.key}
