@@ -3,7 +3,11 @@ import { KeyRound, Mail, Link, X, Check, ShieldCheck, Sparkles, UploadCloud, Arr
 
 export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialCredentials }) {
   const [modalMode, setModalMode] = useState('jira'); // 'jira' or 'manual'
-  const [geminiApiKey, setGeminiApiKey] = useState(initialCredentials?.geminiApiKey || '');
+  
+  const initialKeys = initialCredentials?.geminiApiKey ? initialCredentials.geminiApiKey.split(',') : [''];
+  const [numKeys, setNumKeys] = useState(initialKeys.length || 1);
+  const [geminiApiKeys, setGeminiApiKeys] = useState(initialKeys);
+  
   const [jiraUrl, setJiraUrl] = useState(initialCredentials?.url || '');
   const [email, setEmail] = useState(initialCredentials?.email || '');
   const [apiToken, setApiToken] = useState(initialCredentials?.apiToken || '');
@@ -13,16 +17,36 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
 
   if (!isOpen) return null;
 
+  const handleNumKeysChange = (e) => {
+    const val = parseInt(e.target.value) || 1;
+    const count = Math.max(1, Math.min(val, 10)); // Limit 1 to 10 keys
+    setNumKeys(count);
+    setGeminiApiKeys(prev => {
+      const newKeys = [...prev];
+      while (newKeys.length < count) newKeys.push('');
+      return newKeys.slice(0, count);
+    });
+  };
+
+  const handleKeyChange = (index, val) => {
+    setGeminiApiKeys(prev => {
+      const newKeys = [...prev];
+      newKeys[index] = val;
+      return newKeys;
+    });
+  };
+
   const handleManualSubmit = (e) => {
     e.preventDefault();
-    if (!geminiApiKey.trim()) {
-      setValidationError('Please enter your Gemini API Key to connect.');
+    const validKeys = geminiApiKeys.map(k => k.trim()).filter(Boolean);
+    if (validKeys.length === 0) {
+      setValidationError('Please enter at least one Gemini API Key to connect.');
       return;
     }
     setValidationError('');
     if (onSave) {
       onSave({
-        geminiApiKey,
+        geminiApiKey: validKeys.join(','),
         url: jiraUrl,
         email,
         apiToken,
@@ -42,14 +66,15 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
       setValidationError('Please fill in all Jira credentials (URL, Email, API Token).');
       return;
     }
-    if (!geminiApiKey.trim()) {
-      setValidationError('Please enter your Gemini API Key.');
+    const validKeys = geminiApiKeys.map(k => k.trim()).filter(Boolean);
+    if (validKeys.length === 0) {
+      setValidationError('Please enter at least one Gemini API Key.');
       return;
     }
     setValidationError('');
     if (onSave) {
       onSave({
-        geminiApiKey,
+        geminiApiKey: validKeys.join(','),
         url: jiraUrl,
         email,
         apiToken,
@@ -146,20 +171,36 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
               />
             </div>
 
-            {/* 4. Gemini API Key (Below Jira API Token) */}
+            {/* 4. Number of API Keys */}
             <div className="jira-form-group">
-              <label htmlFor="gemini-api-key">
-                <Sparkles size={15} /> Gemini API Key
+              <label htmlFor="num-api-keys">
+                Number of Gemini API Keys
               </label>
               <input
-                id="gemini-api-key"
-                type="password"
-                placeholder="Enter your Gemini API Key (e.g. AIzaSy...)"
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
-                required
+                id="num-api-keys"
+                type="number"
+                min="1"
+                max="10"
+                value={numKeys}
+                onChange={handleNumKeysChange}
               />
             </div>
+
+            {/* 5. Dynamic Gemini API Keys */}
+            {Array.from({ length: numKeys }).map((_, idx) => (
+              <div className="jira-form-group" key={idx}>
+                <label>
+                  <Sparkles size={15} /> Gemini API Key {idx + 1}
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter your Gemini API Key (e.g. AIzaSy...)"
+                  value={geminiApiKeys[idx] || ''}
+                  onChange={(e) => handleKeyChange(idx, e.target.value)}
+                  required
+                />
+              </div>
+            ))}
 
             {validationError && (
               <div className="jira-error-message" style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>
@@ -206,21 +247,37 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
               </button>
             </div>
 
-            {/* Only Gemini API Key */}
+            {/* Number of API Keys */}
             <div className="jira-form-group">
-              <label htmlFor="gemini-api-key-manual">
-                <Sparkles size={15} /> Gemini API Key
+              <label htmlFor="num-api-keys-manual">
+                Number of Gemini API Keys
               </label>
               <input
-                id="gemini-api-key-manual"
-                type="password"
-                placeholder="Enter your Gemini API Key (e.g. AIzaSy...)"
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
-                required
-                autoFocus
+                id="num-api-keys-manual"
+                type="number"
+                min="1"
+                max="10"
+                value={numKeys}
+                onChange={handleNumKeysChange}
               />
             </div>
+
+            {/* Dynamic Gemini API Keys */}
+            {Array.from({ length: numKeys }).map((_, idx) => (
+              <div className="jira-form-group" key={idx}>
+                <label>
+                  <Sparkles size={15} /> Gemini API Key {idx + 1}
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter your Gemini API Key (e.g. AIzaSy...)"
+                  value={geminiApiKeys[idx] || ''}
+                  onChange={(e) => handleKeyChange(idx, e.target.value)}
+                  required
+                  autoFocus={idx === 0}
+                />
+              </div>
+            ))}
 
             {validationError && (
               <div className="jira-error-message" style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>

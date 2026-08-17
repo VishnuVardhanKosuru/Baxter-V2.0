@@ -21,6 +21,7 @@ Exposes two groups of endpoints:
 import asyncio
 import json
 import os
+import re
 import sys
 import traceback
 import zipfile
@@ -33,8 +34,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from sse_starlette.sse import EventSourceResponse
 
 load_dotenv()
+
+from core.logger import logger
 
 # ─── PATHS ────────────────────────────────────────────────────────────────────
 
@@ -52,12 +56,12 @@ AGENTS_DIR = BASE_DIR / "agents"
 
 # ─── SERVER CONFIG ────────────────────────────────────────────────────────────
 
-SERVER_HOST:         str = os.environ.get("SERVER_HOST", "127.0.0.1")
-SERVER_PORT:         int = int(os.environ.get("SERVER_PORT", "8000"))
+from core.constants import SERVER_HOST, SERVER_PORT
+
 SAMPLE_FRD_FILENAME: str = os.environ.get("SAMPLE_FRD", "ShopSphere_Functional_Requirements_Document.docx")
 SAMPLE_TC_FILENAME:  str = os.environ.get("SAMPLE_TC",  "ShopSphere_Manual_Testcases.docx")
 
-for _d in (UPLOADS_DIR, OUTPUT_DIR, DIR_KNOWLEDGE, JOBS_DIR, INPUT_MODULES_DIR, TESTS_DIR):
+for _d in (UPLOADS_DIR, OUTPUT_DIR, DIR_KNOWLEDGE, INPUT_MODULES_DIR, TESTS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # agents/ needs to be on sys.path so its internal imports work
@@ -74,13 +78,7 @@ from core.batch_manager import batch_manager, JobStatus
 
 # ─── SSE helper ───────────────────────────────────────────────────────────────
 # sse-starlette is used for the live progress stream endpoint.
-
-try:
-    from sse_starlette.sse import EventSourceResponse
-    SSE_AVAILABLE = True
-except ImportError:
-    SSE_AVAILABLE = False
-    print("[WARN] sse-starlette not installed. /stream endpoint will be unavailable.")
+# Imported at the top of the file (hard dependency in requirements.txt).
 
 # ─── APP ──────────────────────────────────────────────────────────────────────
 
@@ -106,33 +104,34 @@ def health_check():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _inject_ui_gemini_key(ui_key: str | None) -> None:
+def _inject_ui_gemini_key(ui_keys: str | None) -> None:
     """
-    Merge a UI-provided Gemini API key with the keys already in .env.
-    - If the key is None/empty/placeholder → do nothing (.env keys are used).
-    - If the key already exists in .env → skip it (no duplicate).
-    - If the key is new → add it as the next available GEMINI_API_KEY_N slot
+    Merge multiple UI-provided Gemini API keys (comma-separated) with the keys already in .env.
+    - If a key already exists in .env → skip it (no duplicate).
+    - If a key is new → add it as the next available GEMINI_API_KEY_N slot
       so the LiteLLM Router can use it as an additional deployment.
     Also resets the cached LLM mapper chain so it picks up fresh keys.
     """
-    if not ui_key or ui_key == "your_gemini_api_key_here" or len(ui_key.strip()) < 10:
+    if not ui_keys or ui_keys == "your_gemini_api_key_here":
         return
 
-    ui_key = ui_key.strip()
     from core.llm_factory import _collect_keys
     existing_keys = _collect_keys("GEMINI_API_KEY")
 
-    if ui_key in existing_keys:
-        return  # Already configured in .env, no action needed
+    for k in ui_keys.split(","):
+        k = k.strip()
+        if len(k) < 10 or k in existing_keys:
+            continue
 
-    # Find the next free slot
-    for i in range(1, 20):
-        suffix = "" if i == 1 else f"_{i}"
-        env_var = f"GEMINI_API_KEY{suffix}"
-        if not os.getenv(env_var):
-            os.environ[env_var] = ui_key
-            print(f" [KEY] UI Gemini API key added as {env_var} (new deployment)", flush=True)
-            break
+        # Find the next free slot
+        for i in range(1, 20):
+            suffix = "" if i == 1 else f"_{i}"
+            env_var = f"GEMINI_API_KEY{suffix}"
+            if not os.getenv(env_var):
+                os.environ[env_var] = k
+                existing_keys.append(k)
+                logger.info("UI Gemini API key added as %s (new deployment)", env_var)
+                break
 
     # Reset cached LLM chains so they pick up the new key set
     import agents.doc_parser as _dp
@@ -150,25 +149,28 @@ async def stage1_parse(
     """
     Stage 1: Parse FRD + TC .docx files into structured JSON.
     Supports file uploads, sample files, or input_modules directory.
+    parse_documents() returns a List[str] of knowledge JSON paths (one per module).
     """
     _inject_ui_gemini_key(request.headers.get("x-gemini-key"))
 
-    print("\n" + "=" * 60, flush=True)
-    print(" [STAGE 1] INGESTION & DOCUMENT PARSING AGENT STARTED", flush=True)
-    print("=" * 60, flush=True)
+    logger.info("=" * 60)
+    logger.info("[STAGE 1] INGESTION & DOCUMENT PARSING AGENT STARTED")
+    logger.info("=" * 60)
+    import litellm as _litellm
+    _litellm.current_phase = "Parser"
     try:
         if use_input_modules or (INPUT_MODULES_DIR.exists() and any(INPUT_MODULES_DIR.rglob("*.docx")) and not frd_file and not tc_file and not use_sample):
-            print(f" [STAGE 1] Parsing all modules from directory: {INPUT_MODULES_DIR}", flush=True)
-            output_json_path = await asyncio.to_thread(
+            logger.info("[STAGE 1] Parsing all modules from directory: %s", INPUT_MODULES_DIR)
+            json_paths = await asyncio.to_thread(
                 parse_documents, str(INPUT_MODULES_DIR), str(OUTPUT_DIR)
             )
         elif use_sample or (not frd_file and not tc_file):
             sample_frd = BASE_DIR / "samples" / SAMPLE_FRD_FILENAME
             sample_tc  = BASE_DIR / "samples" / SAMPLE_TC_FILENAME
-            print(f" [STAGE 1] Using sample documents: {sample_frd.name} & {sample_tc.name}", flush=True)
+            logger.info("[STAGE 1] Using sample documents: %s & %s", sample_frd.name, sample_tc.name)
             if not sample_frd.exists() or not sample_tc.exists():
                 raise HTTPException(400, "Sample documents not found in workspace.")
-            output_json_path = await asyncio.to_thread(
+            json_paths = await asyncio.to_thread(
                 parse_documents, str(sample_frd), str(sample_tc), str(OUTPUT_DIR)
             )
         else:
@@ -176,118 +178,182 @@ async def stage1_parse(
                 raise HTTPException(400, "Both FRD (.docx) and Test Cases (.docx) files are required.")
             frd_path = str(UPLOADS_DIR / frd_file.filename)
             tc_path  = str(UPLOADS_DIR / tc_file.filename)
-            print(f" [STAGE 1] Parsing uploaded files: {frd_file.filename} & {tc_file.filename}", flush=True)
+            logger.info("[STAGE 1] Parsing uploaded files: %s & %s", frd_file.filename, tc_file.filename)
             with open(frd_path, "wb") as f:
                 f.write(await frd_file.read())
             with open(tc_path, "wb") as f:
                 f.write(await tc_file.read())
-
-            output_json_path = await asyncio.to_thread(
+            json_paths = await asyncio.to_thread(
                 parse_documents, frd_path, tc_path, str(OUTPUT_DIR)
             )
 
-        if not output_json_path or not os.path.exists(output_json_path):
-            k_files = list((OUTPUT_DIR / "knowledge").glob("*.json"))
+        # json_paths is now a List[str] — one path per module
+        if not json_paths:
+            # Fallback: pick up any knowledge files already on disk
+            k_files = sorted((OUTPUT_DIR / "knowledge").glob("*.json"), key=os.path.getmtime, reverse=True)
             if k_files:
-                output_json_path = str(k_files[0])
+                json_paths = [str(p) for p in k_files]
             else:
                 raise ValueError("No output JSON was generated during parsing.")
 
-        try:
-            with open(output_json_path, "r", encoding="utf-8") as jf:
-                parsed_data = json.load(jf)
-        except Exception:
-            parsed_data = {}
+        # Aggregate data across all parsed modules
+        all_test_cases = []
+        modules_data = []
+        for jp in json_paths:
+            try:
+                with open(jp, "r", encoding="utf-8") as jf:
+                    pd = json.load(jf)
+                all_test_cases.extend(pd.get("test_cases", []))
+                modules_data.append(pd)
+            except Exception:
+                pass
 
-        print(f" [STAGE 1] SUCCESS -> Output: {output_json_path}", flush=True)
-        print(f"           Extracted Test Cases: {len(parsed_data.get('test_cases', []))}", flush=True)
-        print("=" * 60 + "\n", flush=True)
+        # Use first module data as primary result; UI only needs one payload
+        primary_data = modules_data[0] if modules_data else {}
+        primary_data["test_cases"] = all_test_cases  # merged across all modules
+
+        logger.info("[STAGE 1] SUCCESS -> %d module(s) parsed, %d total test cases", len(json_paths), len(all_test_cases))
+        logger.info("=" * 60)
 
         return JSONResponse({
             "success": True,
             "result": {
-                "success":     True,
-                "output_file": str(Path(output_json_path).relative_to(BASE_DIR)),
-                "data":        parsed_data,
+                "success":      True,
+                "output_file":  str(Path(json_paths[0]).relative_to(BASE_DIR)),
+                "modules":      [str(Path(p).relative_to(BASE_DIR)) for p in json_paths],
+                "module_count": len(json_paths),
+                "data":         primary_data,
             }
         })
     except Exception as exc:
-        print(f" [STAGE 1 ERROR] {exc}", flush=True)
-        traceback.print_exc()
-        print("=" * 60 + "\n", flush=True)
+        logger.error("[STAGE 1 ERROR] %s", exc, exc_info=True)
         return JSONResponse({"success": False, "detail": str(exc)}, status_code=500)
 
 
 @app.post("/api/stage2-generate")
 async def stage2_generate(request: Request):
     """
-    Stage 2: Generate Cucumber + Selenium test code from the parsed JSON.
-    Returns standard JSON response.
+    Stage 2: Generate Cucumber + Selenium test code from all parsed knowledge JSONs.
+    Each module gets its own sub-directory under output/tests/<module_slug>/
+    containing expected.csv, cucumber/, and selenium/.
     """
     _inject_ui_gemini_key(request.headers.get("x-gemini-key"))
 
-    print("\n" + "=" * 60, flush=True)
-    print(" [STAGE 2] TEST CODE GENERATOR AGENT STARTED", flush=True)
-    print("=" * 60, flush=True)
+    logger.info("=" * 60)
+    logger.info("[STAGE 2] TEST CODE GENERATOR AGENT STARTED")
+    logger.info("=" * 60)
+    import litellm as _litellm
+    _litellm.current_phase = "Generator"
+
+    # Collect all knowledge JSONs (per-module files from Stage 1)
+    knowledge_dir = OUTPUT_DIR / "knowledge"
     json_files = sorted(
-        list(OUTPUT_DIR.glob("*.json")) + list((OUTPUT_DIR / "knowledge").glob("*.json")),
-        key=os.path.getmtime,
-        reverse=True
+        list(knowledge_dir.glob("*.json")),
+        key=os.path.getmtime
     )
+    if not json_files:
+        # Fallback: check root output dir for any json
+        json_files = sorted(
+            list(OUTPUT_DIR.glob("*.json")),
+            key=os.path.getmtime,
+            reverse=True
+        )
     if not json_files:
         raise HTTPException(400, "No parsed JSON found. Run Stage 1 first.")
 
-    latest_json = json_files[0]
-    print(f" [STAGE 2] Target Knowledge Input: {latest_json}", flush=True)
+    logger.info("[STAGE 2] Processing %d module knowledge file(s)...", len(json_files))
+
+    total_tc = 0
+    total_cucumber = 0
+    total_selenium = 0
+    all_feature_ids: set = set()
+    modules_summary = []
+    primary_data = {}
 
     try:
-        await asyncio.to_thread(
-            run_agent,
-            stage1_json_path=str(latest_json),
-            out_dir_path=str(TESTS_DIR)
+        for knowledge_json in json_files:
+            # Derive per-module output directory: output/tests/<module_slug>/
+            module_slug = knowledge_json.stem.replace("_knowledge", "")
+            module_out_dir = TESTS_DIR / module_slug
+            module_out_dir.mkdir(parents=True, exist_ok=True)
+
+            logger.info("[STAGE 2] Module: %s -> %s", module_slug, module_out_dir)
+
+            await asyncio.to_thread(
+                run_agent,
+                stage1_json_path=str(knowledge_json),
+                out_dir_path=str(module_out_dir)
+            )
+
+            # Read module stats
+            try:
+                with open(knowledge_json, "r", encoding="utf-8") as jf:
+                    parsed_data = json.load(jf)
+                if not primary_data:
+                    primary_data = parsed_data
+            except Exception:
+                parsed_data = {}
+
+            module_tcs = parsed_data.get("test_cases", [])
+            module_tc_count = len(module_tcs)
+            module_feature_ids = {tc.get("feature_ref") for tc in module_tcs if tc.get("feature_ref")}
+
+            cuc_dir = module_out_dir / "cucumber"
+            sel_dir = module_out_dir / "selenium"
+            cuc_count = len(list(cuc_dir.glob("*.feature"))) if cuc_dir.exists() else module_tc_count
+            sel_count = len(list(sel_dir.glob("*.py")))      if sel_dir.exists() else module_tc_count
+
+            total_tc      += module_tc_count
+            total_cucumber += cuc_count
+            total_selenium += sel_count
+            all_feature_ids.update(module_feature_ids)
+
+            modules_summary.append({
+                "module":          module_slug,
+                "test_cases":      module_tc_count,
+                "cucumber_files":  cuc_count,
+                "selenium_files":  sel_count,
+                "output_dir":      str(module_out_dir.relative_to(BASE_DIR)),
+            })
+
+        logger.info(
+            "[STAGE 2] SUCCESS -> %d module(s), %d total TCs (%d Cucumber, %d Selenium)",
+            len(json_files), total_tc, total_cucumber, total_selenium
         )
-
-        try:
-            with open(latest_json, "r", encoding="utf-8") as jf:
-                parsed_data = json.load(jf)
-        except Exception:
-            parsed_data = {}
-
-        test_cases  = parsed_data.get("test_cases", [])
-        total_tc    = len(test_cases)
-        feature_ids = {tc.get("feature_ref") for tc in test_cases if tc.get("feature_ref")}
-        sel_dir     = TESTS_DIR / "selenium"
-        cuc_dir     = TESTS_DIR / "cucumber"
-        selenium_count = len(list(sel_dir.glob("*.py")))      if sel_dir.exists() else total_tc
-        cucumber_count = len(list(cuc_dir.glob("*.feature"))) if cuc_dir.exists() else total_tc
-
-        print(f" [STAGE 2] SUCCESS -> Generated {total_tc} Tests ({cucumber_count} Cucumber, {selenium_count} Selenium)", flush=True)
-        print("=" * 60 + "\n", flush=True)
+        logger.info("=" * 60)
 
         return JSONResponse({
             "success": True,
             "result": {
                 "success":    True,
-                "output_file": str(latest_json.relative_to(BASE_DIR)),
                 "tests_dir":  str(TESTS_DIR.relative_to(BASE_DIR)),
+                "modules":    modules_summary,
                 "summary": {
+                    "total_modules":    len(json_files),
                     "total_test_cases": total_tc,
-                    "total_features":   len(feature_ids),
-                    "selenium_count":   selenium_count,
-                    "cucumber_count":   cucumber_count,
-                    "project":          parsed_data.get("project", ""),
-                    "version":          parsed_data.get("version", "1.0"),
+                    "total_features":   len(all_feature_ids),
+                    "selenium_count":   total_selenium,
+                    "cucumber_count":   total_cucumber,
+                    "project":          primary_data.get("project", ""),
+                    "version":          primary_data.get("version", "1.0"),
                 },
-                "data": parsed_data,
+                "data": primary_data,
             }
         })
     except Exception as exc:
+        logger.error("[STAGE 2 ERROR] %s", exc, exc_info=True)
         return JSONResponse({"success": False, "detail": str(exc)}, status_code=500)
 
 
 @app.get("/api/download-zip")
 def download_zip():
-    """Stream all generated test files as a ZIP archive (legacy single-FRD)."""
+    """
+    Stream all generated test files as a ZIP archive.
+    Archive structure mirrors per-module output:
+      <module_slug>/expected.csv
+      <module_slug>/cucumber/TC-001.feature
+      <module_slug>/selenium/test_TC-001.py
+    """
     if not TESTS_DIR.exists() or not any(TESTS_DIR.rglob("*")):
         raise HTTPException(404, "No generated test files available.")
 
@@ -295,6 +361,7 @@ def download_zip():
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fp in TESTS_DIR.rglob("*"):
             if fp.is_file():
+                # Preserve full relative path so per-module structure is in the ZIP
                 zf.write(fp, arcname=str(fp.relative_to(TESTS_DIR)))
     buf.seek(0)
     return StreamingResponse(
@@ -357,6 +424,8 @@ async def batch_submit(
 
     # ── Parse each FRD+TC pair (Stage 1) ─────────────────────────────────────
     # parse_documents() is CPU-bound; run each in a thread to avoid blocking.
+    import litellm as _litellm
+    _litellm.current_phase = "Parser"
     frd_inputs = []
     for idx, (frd_p, tc_p) in enumerate(zip(frd_paths, tc_paths), start=1):
         frd_id   = f"FRD-{idx:03d}"
@@ -374,9 +443,13 @@ async def batch_submit(
         Path(parse_out_dir).mkdir(parents=True, exist_ok=True)
 
         try:
-            json_path = await asyncio.to_thread(
+            # parse_documents() returns List[str]; single-pair mode -> one element
+            json_paths_list = await asyncio.to_thread(
                 parse_documents, frd_p, tc_p, parse_out_dir
             )
+            if not json_paths_list:
+                raise ValueError("parse_documents returned no output paths")
+            json_path = json_paths_list[0]
             with open(json_path, "r", encoding="utf-8") as jf:
                 parsed = json.load(jf)
         except Exception as exc:
@@ -426,8 +499,6 @@ async def batch_stream(job_id: str):
 
     The connection is closed automatically after the final event.
     """
-    if not SSE_AVAILABLE:
-        raise HTTPException(503, "SSE not available. Install sse-starlette.")
 
     job = batch_manager.get_job(job_id)
     if not job:
@@ -570,19 +641,77 @@ def batch_download_frd(job_id: str, frd_id: str):
 # JIRA INGESTION & ATTACHMENT EVALUATION ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-try:
-    from agents.jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
-    JIRA_AVAILABLE = True
-except ImportError:
-    JIRA_AVAILABLE = False
+from agents.jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
 
 class JiraEpicRequest(BaseModel):
     issue_key: str
+    selected_frd_ids: Optional[List[str]] = []
+
+@app.get("/api/jira/epics")
+async def get_all_epics(request: Request, max_results: int = 100):
+    """
+    Fetches all Epics from the connected Jira instance across all accessible projects.
+    Returns a list of {key, summary} objects for populating a dropdown in the UI.
+    """
+    try:
+        jira_url   = request.headers.get("x-jira-url")   or os.getenv("JIRA_URL")
+        jira_email = request.headers.get("x-jira-email") or os.getenv("JIRA_EMAIL")
+        jira_token = request.headers.get("x-jira-token") or os.getenv("JIRA_API_TOKEN")
+
+        if not jira_url or not jira_email or not jira_token:
+            raise HTTPException(400, "Jira credentials (URL, email, token) are required.")
+
+        client = JiraClient(jira_url=jira_url, email=jira_email, api_token=jira_token)
+
+        # Directly search for all Epics the user can see, ordered by most recently updated
+        # We bypass client.search_issues() because that method drops issues without attachments
+        url = f"{client.jira_url}/rest/api/3/search/jql"
+        payload = {
+            "jql": "issuetype = Epic ORDER BY updated DESC",
+            "maxResults": max_results,
+            "fields": ["summary"]
+        }
+        resp = client.session.post(url, json=payload)
+        resp.raise_for_status()
+        
+        issues = resp.json().get("issues", [])
+
+        epics = [
+            {
+                "key":     issue.get("key", ""),
+                "summary": (
+                    issue.get("fields", {}).get("summary")
+                    or issue.get("summary")
+                    or issue.get("key", "")
+                ),
+            }
+            for issue in issues
+            if issue.get("key")
+        ]
+
+        logger.info("[JIRA] Fetched %d epics from %s", len(epics), jira_url)
+        
+        # Save epics to a local text file
+        try:
+            epics_file = OUTPUT_DIR / "available_epics.txt"
+            with open(epics_file, "w", encoding="utf-8") as f:
+                f.write(f"--- Available Epics from {jira_url} ({len(epics)}) ---\n\n")
+                for epic in epics:
+                    f.write(f"{epic['key']}\n")
+            logger.info("[JIRA] Saved epics list to %s", epics_file)
+        except Exception as e:
+            logger.warning("[JIRA] Failed to save epics to text file: %s", e)
+
+        return {"success": True, "epics": epics, "total": len(epics)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[JIRA] Failed to fetch epics: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/jira/epic/{issue_key}")
 async def get_epic_details(issue_key: str, request: Request):
-    if not JIRA_AVAILABLE:
-        raise HTTPException(500, "Jira integration module not found.")
     try:
         jira_url = request.headers.get("x-jira-url") or os.getenv("JIRA_URL")
         jira_email = request.headers.get("x-jira-email") or os.getenv("JIRA_EMAIL")
@@ -628,80 +757,119 @@ async def get_epic_details(issue_key: str, request: Request):
 
 @app.post("/api/jira/evaluate")
 async def evaluate_jira_epic(payload: JiraEpicRequest, request: Request):
-    if not JIRA_AVAILABLE:
-        raise HTTPException(500, "Jira integration module not found.")
+    """
+    Downloads FRD and TC attachments from a Jira issue into simple numbered
+    sub-folders inside input_modules/. Each FRD+its matching TC pair gets
+    one folder: input_modules/1/, input_modules/2/, etc.
+
+    Folder structure created:
+        input_modules/
+            1/
+                FRD_filename.docx
+                TC_filename.docx
+            2/
+                FRD_filename.docx
+                TC_filename.docx
+    """
     try:
-        issue_key = payload.issue_key
-        jira_url = request.headers.get("x-jira-url") or os.getenv("JIRA_URL")
+        issue_key  = payload.issue_key
+        jira_url   = request.headers.get("x-jira-url")   or os.getenv("JIRA_URL")
         jira_email = request.headers.get("x-jira-email") or os.getenv("JIRA_EMAIL")
         jira_token = request.headers.get("x-jira-token") or os.getenv("JIRA_API_TOKEN")
         gemini_key = request.headers.get("x-gemini-key") or os.getenv("GEMINI_API_KEY")
 
         client = JiraClient(jira_url=jira_url, email=jira_email, api_token=jira_token)
-        
+
         analyzer = LLMAnalyzer()
         if gemini_key:
             analyzer.gemini_key = gemini_key
-        
+
         raw_issue = client.get_issue(issue_key)
-        context = client.extract_context(raw_issue)
-        analysis = analyzer.classify(context)
-        
-        # Dynamic download workspace: Clean & recreate input_modules
-        output_dir = BASE_DIR / "input_modules"
-        if output_dir.exists():
-            for old_file in output_dir.iterdir():
-                if old_file.is_file():
-                    try:
-                        old_file.unlink()
-                    except Exception:
-                        pass
-                elif old_file.is_dir():
-                    import shutil
-                    try:
-                        shutil.rmtree(old_file)
-                    except Exception:
-                        pass
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        downloaded_files = []
+        context   = client.extract_context(raw_issue)
+        analysis  = analyzer.classify(context)
+
+        # ── Classify all attachments into FRD and TC lists ────────────────────
         classified_map = {str(item.get("id")): item for item in analysis.get("classified_files", [])}
-        
-        feature_name = sanitize_filename(analysis.get("feature_name", "Feature"))
+
+        frd_attachments = []
+        tc_attachments  = []
+
         for att in context.get("attachments", []):
             att_id = str(att["id"])
-            fname = att["filename"]
-            item = classified_map.get(att_id)
-            
+            fname  = att["filename"]
+            item   = classified_map.get(att_id)
+
             if not item:
-                rule_meta = analyzer.classify_single_file(fname, issue_key, feature_name)
-                cat = rule_meta.get("category", "OTHER")
-                sug_name = rule_meta.get("suggested_filename", fname)
+                rule_meta = analyzer.classify_single_file(fname, issue_key, "")
+                cat       = rule_meta.get("category", "OTHER")
+                sug_name  = rule_meta.get("suggested_filename", fname)
             else:
-                cat = item.get("category", "OTHER")
+                cat      = item.get("category", "OTHER")
                 sug_name = item.get("suggested_filename", fname)
-                
-            sug_name = sanitize_filename(sug_name)
-            save_path = output_dir / sug_name
-            
-            try:
-                client.download_attachment(att["content_url"], str(save_path))
-                downloaded_files.append({
-                    "original_name": fname,
-                    "saved_name": sug_name,
-                    "category": cat,
-                    "path": str(save_path)
-                })
-            except Exception as e:
-                print(f"Failed to download {fname}: {e}")
-                    
+
+            att_info = {**att, "category": cat, "sug_name": sanitize_filename(sug_name or fname)}
+
+            if cat == "FRD":
+                frd_attachments.append(att_info)
+            elif cat == "MANUAL_TEST_CASES":
+                tc_attachments.append(att_info)
+
+        # ── Find the next available numbered folder in input_modules/ ─────────
+        existing_nums = [
+            int(item.name) for item in INPUT_MODULES_DIR.iterdir()
+            if item.is_dir() and item.name.isdigit()
+        ]
+        next_num = max(existing_nums, default=0) + 1
+
+        # ── Pair each FRD with its TC and write to numbered folder ────────────
+        paired_attachments = []
+        max_att_len = max(len(frd_attachments), len(tc_attachments))
+        for i in range(max_att_len):
+            frd = frd_attachments[i] if i < len(frd_attachments) else None
+            tc = tc_attachments[i] if i < len(tc_attachments) else None
+            paired_attachments.append((frd, tc))
+
+        # Filter out pairs if selected_frd_ids is provided
+        if payload.selected_frd_ids:
+            filtered_pairs = []
+            for frd, tc in paired_attachments:
+                if frd and str(frd["id"]) in payload.selected_frd_ids:
+                    filtered_pairs.append((frd, tc))
+            paired_attachments = filtered_pairs
+
+        max_len          = len(paired_attachments)
+        downloaded_files = []
+
+        for i, (frd, tc) in enumerate(paired_attachments):
+            folder_num = next_num + i
+            folder     = INPUT_MODULES_DIR / str(folder_num)
+            folder.mkdir(parents=True, exist_ok=True)
+
+            for att_info in filter(None, [frd, tc]):
+                save_path = folder / att_info["sug_name"]
+                try:
+                    client.download_attachment(att_info["content_url"], str(save_path))
+                    downloaded_files.append({
+                        "original_name": att_info["filename"],
+                        "saved_name":    att_info["sug_name"],
+                        "category":      att_info["category"],
+                        "folder":        str(folder.relative_to(BASE_DIR)),
+                        "path":          str(save_path.relative_to(BASE_DIR)),
+                    })
+                    logger.info("[JIRA] Downloaded [%s] %s -> %s", att_info["category"], att_info["filename"], save_path)
+                except Exception as e:
+                    logger.error("[JIRA] Failed to download %s: %s", att_info["filename"], e)
+
+        folders_created = list(range(next_num, next_num + max_len))
         return {
             "success": True,
-            "message": f"Downloaded {len(downloaded_files)} files to input_modules",
-            "files": downloaded_files
+            "message": f"Downloaded {len(downloaded_files)} file(s) into folder(s): {folders_created}",
+            "folders": [str((INPUT_MODULES_DIR / str(n)).relative_to(BASE_DIR)) for n in folders_created],
+            "files":   downloaded_files,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -735,7 +903,11 @@ def _parse_cost_logs():
         r"Cost:\s+\$([\d\.]+)"
     )
 
-    phases_map = defaultdict(lambda: {"in": 0, "out": 0, "cost": 0.0, "calls": 0, "models": set(), "keys": set()})
+    phases_map = defaultdict(lambda: {
+        "in": 0, "out": 0, "cost": 0.0, "calls": 0, 
+        "models": set(), "keys": set(),
+        "key_breakdown": defaultdict(lambda: {"in": 0, "out": 0, "cost": 0.0, "calls": 0})
+    })
     entries = []
     total_cost = 0.0
     total_in = 0
@@ -760,6 +932,11 @@ def _parse_cost_logs():
                 phases_map[phase]["models"].add(model)
                 phases_map[phase]["keys"].add(key_alias)
 
+                phases_map[phase]["key_breakdown"][key_alias]["in"] += in_toks
+                phases_map[phase]["key_breakdown"][key_alias]["out"] += out_toks
+                phases_map[phase]["key_breakdown"][key_alias]["cost"] += cost
+                phases_map[phase]["key_breakdown"][key_alias]["calls"] += 1
+
                 total_cost += cost
                 total_in += in_toks
                 total_out += out_toks
@@ -776,6 +953,19 @@ def _parse_cost_logs():
 
     phases_list = []
     for ph_name, pdata in phases_map.items():
+        kb_list = [
+            {
+                "key_alias": k,
+                "input_tokens": v["in"],
+                "output_tokens": v["out"],
+                "total_tokens": v["in"] + v["out"],
+                "cost": v["cost"],
+                "calls": v["calls"],
+                "cost_formatted": f"${v['cost']:.6f}"
+            }
+            for k, v in pdata["key_breakdown"].items()
+        ]
+        
         phases_list.append({
             "phase": ph_name,
             "input_tokens": pdata["in"],
@@ -785,7 +975,8 @@ def _parse_cost_logs():
             "calls": pdata["calls"],
             "models": list(pdata["models"]),
             "keys": list(pdata["keys"]),
-            "cost_formatted": f"${pdata['cost']:.6f}"
+            "cost_formatted": f"${pdata['cost']:.6f}",
+            "key_breakdown": kb_list
         })
 
     return {

@@ -35,6 +35,7 @@ from core.models import (
 )
 from agents.scanners import ModuleFolderScanner, FRDModuleParser, TestCaseModuleParser
 from core.llm_factory import create_llm
+from core.logger import logger
 
 MAPPER_SYSTEM_PROMPT = (
     "You are an expert Test Automation Architect. "
@@ -59,7 +60,7 @@ def _get_mapper_chain():
             llm = bundle.llm if hasattr(bundle, "llm") else bundle
             _mapper_chain = MAPPER_PROMPT | llm.with_structured_output(BatchMappingResponse)
         except Exception as e:
-            print(f"[WARN] LLM mapper init warning: {e}. Fallback mapping will be used.")
+            logger.warning("LLM mapper init warning: %s. Fallback mapping will be used.", e)
             return None
     return _mapper_chain
 
@@ -189,16 +190,19 @@ def parse_documents(
     project: str = const.DEFAULT_PROJECT_NAME,
     version: str = const.DEFAULT_VERSION,
     skip_types: Optional[List[str]] = None,
-) -> Any:
+) -> List[str]:
     """
     Orchestrate parsing and mapping pipeline.
     Supports either:
-      1. parse_documents(modules_dir="input_modules", out_dir="output")
-      2. parse_documents(frd_path=".../FRD.docx", tc_path=".../TC.docx", target_out_dir="output")
+      1. parse_documents(modules_dir="input_modules", out_dir="output") -> List[str]
+      2. parse_documents(frd_path=".../FRD.docx", tc_path=".../TC.docx", target_out_dir="output") -> List[str]
+
+    Always returns a List[str] of generated knowledge JSON paths (one per module).
+    Returns an empty list if no modules are found or parsing fails.
     """
     skip_types = skip_types or []
-    
-    # Check if first two arguments are specific .docx files
+
+    # Check if first two arguments are specific .docx files (single-pair mode)
     if str(modules_dir_or_frd).lower().endswith(".docx") and str(out_dir_or_tc).lower().endswith(".docx"):
         frd_p = Path(modules_dir_or_frd)
         tc_p = Path(out_dir_or_tc)
@@ -213,12 +217,12 @@ def parse_documents(
     else:
         modules_dir = modules_dir_or_frd
         out_dir = out_dir_or_tc
-        print(f"\n[INFO] Scanning Modules Dir: {modules_dir}")
+        logger.info("Scanning Modules Dir: %s", modules_dir)
         scanner = ModuleFolderScanner(Path(modules_dir))
         packages = scanner.scan()
     
     if not packages:
-        print("[WARN] No module packages found.")
+        logger.warning("No module packages found.")
         return []
         
     generated_files = []
@@ -228,29 +232,29 @@ def parse_documents(
     packages_to_process = []
     
     for package in packages:
-        print(f"\n[MODULE] {package.module_folder}")
+        logger.info("[MODULE] %s", package.module_folder)
         
         if not package.frd_files or not package.tc_files:
-            print(f"  [WARN] Missing FRD or TC files. Skipping.")
+            logger.warning("Missing FRD or TC files for module. Skipping.")
             continue
             
         # Parse FRD
         frd_file = package.frd_files[0]
-        print(f"  [FRD] Extracting {frd_file.name}")
+        logger.info("  [FRD] Extracting %s", frd_file.name)
         ast = FRDModuleParser.parse(frd_file, package.module_folder)
         
         compact_index = build_compact_section_index(ast)
-        print(f"  [FRD] Generated {len(compact_index)} char Compact Index")
+        logger.info("  [FRD] Generated %d char Compact Index", len(compact_index))
         
         # Parse TCs
         module_tcs = []
         for tc_file in package.tc_files:
-            print(f"  [TC] Extracting from {tc_file.name}")
+            logger.info("  [TC] Extracting from %s", tc_file.name)
             tcs = TestCaseModuleParser.parse(tc_file, package.module_folder)
             module_tcs.extend(tcs)
             
         if not module_tcs:
-            print(f"  [WARN] No test cases found in module.")
+            logger.warning("No test cases found in module.")
             continue
             
         tc_summaries = []
@@ -278,7 +282,7 @@ def parse_documents(
         num_keys = len(_collect_keys("GEMINI_API_KEY"))
         concurrency = min(rpm * num_keys, 500) if num_keys > 0 else rpm
         
-        print(f"\n[GEMINI] Batch Mapping {len(batch_inputs)} Modules Concurrently (Concurrency: {concurrency})...", flush=True)
+        logger.info("[GEMINI] Batch Mapping %d Modules Concurrently (Concurrency: %d)...", len(batch_inputs), concurrency)
         
         async def _async_map_all():
             return await chain.abatch(batch_inputs, config={"max_concurrency": concurrency}, return_exceptions=True)
@@ -286,24 +290,23 @@ def parse_documents(
         try:
             responses = asyncio.run(_async_map_all())
         except Exception as e:
-            print(f"[ERROR] Batch LLM Mapping failed: {e}. Using fallback heuristic mapping.", flush=True)
+            logger.error("Batch LLM Mapping failed: %s. Using fallback heuristic mapping.", e)
             responses = [Exception(str(e))] * len(batch_inputs)
     else:
         responses = [Exception("No LLM key configured")] * len(batch_inputs)
         
     # 3. Process Responses and Generate Artifacts
-    main_parsed_path = None
     for idx, (package, ast, module_tcs) in enumerate(packages_to_process):
         response = responses[idx] if idx < len(responses) else Exception("Missing response")
         if isinstance(response, Exception) or not hasattr(response, "mappings") or not response.mappings:
-            print(f"\n[FALLBACK] Applying heuristic requirement mapping for {package.module_folder}...", flush=True)
+            logger.info("[FALLBACK] Applying heuristic requirement mapping for %s...", package.module_folder)
             mapping_response = _generate_fallback_mappings(module_tcs, ast)
         else:
             mapping_response = response
-            
-        print(f"\n[ENRICH] Merging Context for {package.module_folder}...", flush=True)
+
+        logger.info("[ENRICH] Merging Context for %s...", package.module_folder)
         enriched = enrich_module_test_cases(module_tcs, mapping_response, ast)
-        
+
         overview = ModuleOverviewModel()
         for sec in ast.sections:
             title_lower = sec.title.lower()
@@ -325,13 +328,13 @@ def parse_documents(
                             definition = row[1].strip()
                             if term and term.lower() not in ["term", "acronym"]:
                                 overview.glossary[term] = definition
-                                
+
         module_slug = "".join([c if c.isalnum() else "_" for c in package.module_folder.lower()]).strip("_")
         module_filename = f"{module_slug}_knowledge.json"
         knowledge_dir = os.path.join(out_dir, "knowledge")
         os.makedirs(knowledge_dir, exist_ok=True)
         module_out_path = os.path.join(knowledge_dir, module_filename)
-        
+
         module_payload = ParsedDocumentResponse(
             project=f"{project} - {package.module_folder}",
             version=version,
@@ -342,24 +345,18 @@ def parse_documents(
             ),
             test_cases=enriched,
         )
-        
+
         try:
             with open(module_out_path, "w", encoding="utf-8") as f:
                 json.dump(module_payload.to_dict(), f, indent=2, ensure_ascii=False)
-            print(f"  [SAVED] Module JSON saved: {module_out_path}")
+            logger.info("[SAVED] Module JSON saved: %s", module_out_path)
             generated_files.append(module_out_path)
-
-            # Also save to root parsed_output.json for single-stage runner
-            main_out = os.path.join(out_dir, "parsed_output.json")
-            with open(main_out, "w", encoding="utf-8") as f:
-                json.dump(module_payload.to_dict(), f, indent=2, ensure_ascii=False)
-            main_parsed_path = main_out
         except Exception as e:
-            print(f"  [ERROR] Failed to save module JSON {module_out_path}: {e}")
-            
-    print(f"\n[SUCCESS] Document Parsing Complete!")
-    print(f"  Total Module JSON files generated : {len(generated_files)}")
-    print(f"  Output directory                  : {os.path.join(out_dir, 'knowledge')}")
-    
-    return main_parsed_path or (generated_files[0] if generated_files else "")
+            logger.error("Failed to save module JSON %s: %s", module_out_path, e)
+
+    logger.info("[SUCCESS] Document Parsing Complete!")
+    logger.info("  Total Module JSON files generated : %d", len(generated_files))
+    logger.info("  Output directory                  : %s", os.path.join(out_dir, 'knowledge'))
+
+    return generated_files
 

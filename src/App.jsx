@@ -61,7 +61,7 @@ export default function App() {
     }
   };
 
-  const handleRunPipeline = async (epicKey = null) => {
+  const handleRunPipeline = async (epicKey = null, selectedFrdIds = []) => {
     setPipelineState('running');
     setErrorMessage('');
     setParsedResult(null);
@@ -90,7 +90,7 @@ export default function App() {
             'X-Jira-Token': jiraCredentials?.apiToken || '',
             'X-Gemini-Key': jiraCredentials?.geminiApiKey || ''
           },
-          body: JSON.stringify({ issue_key: epicKey })
+          body: JSON.stringify({ issue_key: epicKey, selected_frd_ids: selectedFrdIds })
         });
         const jiraData = await jiraRes.json();
         if (!jiraRes.ok || !jiraData.success) {

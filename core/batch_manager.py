@@ -29,6 +29,7 @@ from enum import Enum
 from pathlib import Path
 from core.constants import DIR_JOBS
 from typing import Dict, List, Optional, Any
+from core.logger import logger
 
 
 
@@ -105,7 +106,7 @@ class BatchJobManager:
         job_dir = DIR_JOBS / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         self._jobs[job_id] = BatchJob(job_id=job_id, output_root=job_dir)
-        print(f"[BATCH] Job created: {job_id} → {job_dir}")
+        logger.info("[BATCH] Job created: %s → %s", job_id, job_dir)
         return job_id
 
     def get_job(self, job_id: str) -> Optional[BatchJob]:
@@ -156,7 +157,7 @@ class BatchJobManager:
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.error  = str(exc)
-            print(f"[BATCH] {job_id}: LLM init failed — {exc}")
+            logger.error("[BATCH] %s: LLM init failed — %s", job_id, exc)
             return
 
         base_url = os.getenv("BASE_URL", "http://localhost")
@@ -177,7 +178,7 @@ class BatchJobManager:
             rpm         = int(os.getenv(rpm_env, "50"))
             num_keys    = len(_collect_keys(key_prefix))
             concurrency = min(rpm * num_keys, 500)   # cap at 500 to avoid memory pressure
-            print(f"[BATCH] Auto-concurrency: {rpm} RPM × {num_keys} keys = {concurrency}")
+            logger.info("[BATCH] Auto-concurrency: %d RPM × %d keys = %d", rpm, num_keys, concurrency)
 
         # ── SEQUENTIAL: one FRD fully completes before the next starts ───────
         for frd in frd_inputs:
@@ -196,7 +197,7 @@ class BatchJobManager:
                 total=len(tc_list),
             )
 
-            print(f"\n[BATCH] {job_id}: Starting FRD {frd_id} ({frd_name}) — {len(tc_list)} TCs")
+            logger.info("[BATCH] %s: Starting FRD %s (%s) — %d TCs", job_id, frd_id, frd_name, len(tc_list))
 
             # Async callback called after each TC is done — updates SSE state
             async def _progress_cb(fid: str, done: int, total: int, _id: str = frd_id):
@@ -234,17 +235,17 @@ class BatchJobManager:
                 job.frds[frd_id].status    = JobStatus.DONE
                 job.frds[frd_id].completed = result.completed
                 job.frds[frd_id].failed    = result.failed
-                print(f"[BATCH] {job_id}: FRD {frd_id} complete — "
-                      f"{result.completed}/{result.total} TCs, {len(result.failed)} failed.")
+                logger.info("[BATCH] %s: FRD %s complete — %d/%d TCs, %d failed.",
+                            job_id, frd_id, result.completed, result.total, len(result.failed))
             except Exception as exc:
                 job.frds[frd_id].status = JobStatus.FAILED
-                print(f"[BATCH] {job_id}: FRD {frd_id} FAILED — {exc}")
+                logger.error("[BATCH] %s: FRD %s FAILED — %s", job_id, frd_id, exc)
             finally:
                 bundle.teardown_cache()  # delete Gemini cache (no-op for OpenAI/Anthropic)
         # ── END SEQUENTIAL LOOP ───────────────────────────────────────────────
 
         job.status = JobStatus.DONE
-        print(f"\n[BATCH] {job_id}: All FRDs complete. Job done ✅")
+        logger.info("[BATCH] %s: All FRDs complete. Job done ✅", job_id)
 
 
 # ── Singleton — shared across all FastAPI requests ────────────────────────────

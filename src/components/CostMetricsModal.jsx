@@ -42,9 +42,9 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
   });
 
   return (
-    <div className="jira-modal-backdrop" onClick={onClose}>
+    <div className="jira-modal-overlay" onClick={onClose}>
       <div
-        className="jira-modal-card cost-modal-card"
+        className="jira-modal-container cost-modal-card"
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth: '850px', width: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
       >
@@ -110,8 +110,9 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
           
           {/* Top KPI Summary Cards */}
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            display: 'flex',
+            justifyContent: 'center',
+            flexWrap: 'wrap',
             gap: '0.85rem',
             marginBottom: '1.25rem'
           }}>
@@ -250,9 +251,10 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                       </div>
 
                       <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-                        gap: '0.5rem',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        flexWrap: 'wrap',
+                        gap: '1.5rem',
                         fontSize: '0.785rem',
                         color: '#475569',
                         backgroundColor: '#F8FAFC',
@@ -278,6 +280,37 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                           </span>
                         </div>
                       </div>
+
+                      {/* Sub-breakdown per API Key */}
+                      {p.key_breakdown && p.key_breakdown.length > 0 && (
+                        <div style={{ marginTop: '0.85rem', borderTop: '1px solid #E2E8F0', paddingTop: '0.85rem' }}>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', marginBottom: '0.5rem', textAlign: 'center', letterSpacing: '0.05em' }}>
+                            BREAKDOWN BY API KEY
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+                            {p.key_breakdown.map((kb, kbIdx) => (
+                              <div key={kbIdx} style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                flexWrap: 'wrap',
+                                gap: '1.5rem',
+                                backgroundColor: '#F1F5F9',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '6px',
+                                fontSize: '0.75rem',
+                                color: '#475569',
+                                width: '100%'
+                              }}>
+                                <div style={{ fontWeight: 600, color: '#0033A0', minWidth: '90px' }}>{kb.key_alias}</div>
+                                <div>Calls: <strong>{kb.calls}</strong></div>
+                                <div>In: <strong>{kb.input_tokens.toLocaleString()}</strong></div>
+                                <div>Out: <strong>{kb.output_tokens.toLocaleString()}</strong></div>
+                                <div style={{ color: '#047857', fontWeight: 700 }}>{kb.cost_formatted}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

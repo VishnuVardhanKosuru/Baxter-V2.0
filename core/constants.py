@@ -77,8 +77,8 @@ FALLBACK_MODEL: str = (
 )
 
 DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "https://shop.shopsphere.com")
-MAX_LLM_RETRIES:        int = 3
-RATE_LIMIT_BASE_WAIT_S: int = 5
+MAX_LLM_RETRIES:        int = 5
+RATE_LIMIT_BASE_WAIT_S: int = 30
 NETWORK_BASE_WAIT_S:    int = 3
 LLM_TEMPERATURE:      float = 0.2
 SEPARATOR_WIDTH:        int = 62

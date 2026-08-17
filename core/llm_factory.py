@@ -30,6 +30,8 @@ import datetime
 import threading
 import litellm
 
+from core.logger import logger
+
 # ---------------------------------------------------------------------------
 # Cost Tracking
 # ---------------------------------------------------------------------------
@@ -78,7 +80,7 @@ def _track_cost_callback(kwargs, completion_response, start_time, end_time):
             with open(_COST_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(log_line)
     except Exception as exc:
-        print(f"[WARN] Failed to track cost: {exc}")
+        logger.warning("Failed to track cost: %s", exc)
 
 # Register cost tracking callback
 litellm.success_callback = [_track_cost_callback]
@@ -115,10 +117,10 @@ class LLMBundle:
         Anthropic -> cache_control already injected in build_chain() (90% saving)
         """
         if self.provider == "openai":
-            print("[CACHE] OpenAI auto-caches repeated prompts >=1024 tokens (50% discount).")
+            logger.info("[CACHE] OpenAI auto-caches repeated prompts >=1024 tokens (50%% discount).")
             return
         if self.provider == "anthropic":
-            print("[CACHE] Anthropic cache_control set in system message (~90% saving on cached tokens).")
+            logger.info("[CACHE] Anthropic cache_control set in system message (~90%% saving on cached tokens).")
             return
         if self.provider != "gemini":
             return
@@ -126,13 +128,13 @@ class LLMBundle:
         try:
             import google.generativeai as genai
         except ImportError:
-            print("[CACHE] WARNING: google-generativeai not installed - skipping explicit cache.")
-            print("        Run: pip install google-generativeai")
+            logger.warning("[CACHE] google-generativeai not installed - skipping explicit cache.")
+            logger.warning("        Run: pip install google-generativeai")
             return
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            print("[CACHE] WARNING: GEMINI_API_KEY not set - skipping explicit cache.")
+            logger.warning("[CACHE] GEMINI_API_KEY not set - skipping explicit cache.")
             return
 
         genai.configure(api_key=api_key)
@@ -142,9 +144,9 @@ class LLMBundle:
                 system_instruction=system_prompt_text,
                 ttl=datetime.timedelta(minutes=ttl_minutes),
             )
-            print(f"[CACHE] OK Gemini cache created: {self._cache_obj.name} (TTL={ttl_minutes}min)")
+            logger.info("[CACHE] OK Gemini cache created: %s (TTL=%dmin)", self._cache_obj.name, ttl_minutes)
         except Exception as exc:
-            print(f"[CACHE] WARNING: Failed to create Gemini cache ({exc}) - running without cache.")
+            logger.warning("[CACHE] Failed to create Gemini cache (%s) - running without cache.", exc)
             self._cache_obj = None
 
     def teardown_cache(self) -> None:
@@ -156,9 +158,9 @@ class LLMBundle:
             return
         try:
             self._cache_obj.delete()
-            print(f"[CACHE] Gemini cache deleted: {self._cache_obj.name}")
+            logger.info("[CACHE] Gemini cache deleted: %s", self._cache_obj.name)
         except Exception as exc:
-            print(f"[CACHE] WARNING: Failed to delete cache ({exc}) - it will expire on its own.")
+            logger.warning("[CACHE] Failed to delete cache (%s) - it will expire on its own.", exc)
         finally:
             self._cache_obj = None
 
@@ -241,9 +243,9 @@ def _build_gemini(model: str) -> Any:
     rpm = int(os.getenv("GEMINI_RPM", "50"))
     tpm = int(os.getenv("GEMINI_TPM", "4000000"))
     litellm_model = f"gemini/{model}"
-    print(
-        f"[LLM] Gemini - model={litellm_model}, "
-        f"keys={len(keys)}, rpm={rpm}/key, tpm={tpm}/key"
+    logger.info(
+        "[LLM] Gemini - model=%s, keys=%d, rpm=%d/key, tpm=%d/key",
+        litellm_model, len(keys), rpm, tpm
     )
     return _build_litellm_router(litellm_model, keys, rpm, tpm)
 
@@ -259,9 +261,9 @@ def _build_openai(model: str) -> Any:
         )
     rpm = int(os.getenv("OPENAI_RPM", "500"))
     tpm = int(os.getenv("OPENAI_TPM", "2000000"))
-    print(
-        f"[LLM] OpenAI - model={model}, "
-        f"keys={len(keys)}, rpm={rpm}/key"
+    logger.info(
+        "[LLM] OpenAI - model=%s, keys=%d, rpm=%d/key",
+        model, len(keys), rpm
     )
     return _build_litellm_router(model, keys, rpm, tpm)
 
@@ -278,9 +280,9 @@ def _build_anthropic(model: str) -> Any:
     rpm = int(os.getenv("ANTHROPIC_RPM", "50"))
     tpm = int(os.getenv("ANTHROPIC_TPM", "2000000"))
     litellm_model = f"anthropic/{model}"
-    print(
-        f"[LLM] Anthropic - model={litellm_model}, "
-        f"keys={len(keys)}, rpm={rpm}/key"
+    logger.info(
+        "[LLM] Anthropic - model=%s, keys=%d, rpm=%d/key",
+        litellm_model, len(keys), rpm
     )
     return _build_litellm_router(litellm_model, keys, rpm, tpm)
 
@@ -313,7 +315,7 @@ def create_llm() -> LLMBundle:
         return LLMBundle(llm=_build_anthropic(model), provider="anthropic", model=model)
 
     # Unknown prefix - attempt best-effort via whichever keys are available
-    print(f"[LLM] WARNING: Unknown model prefix '{model}' - attempting via LiteLLM directly.")
+    logger.warning("[LLM] Unknown model prefix '%s' - attempting via LiteLLM directly.", model)
     keys = (
         _collect_keys("OPENAI_API_KEY")
         or _collect_keys("GEMINI_API_KEY")

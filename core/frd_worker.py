@@ -21,12 +21,13 @@ Usage:
 import csv
 import json
 import asyncio
-import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 
 from core.checkpoint import CheckpointManager
+from core.cs_agent import _strip_fences
+from core.logger import logger
 
 
 # ── Result container ──────────────────────────────────────────────────────────
@@ -39,15 +40,6 @@ class FRDWorkerResult:
     total:     int
     completed: int
     failed:    List[str] = field(default_factory=list)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _strip_fences(text: str) -> str:
-    """Remove ```python / ```gherkin / ``` wrappers that LLMs sometimes add."""
-    text = re.sub(r"^```[a-zA-Z]*\r?\n", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\r?\n```\s*$", "", text, flags=re.MULTILINE)
-    return text.strip()
 
 
 # ── FRD Worker ────────────────────────────────────────────────────────────────
@@ -122,14 +114,13 @@ class FRDWorker:
         done_count = self.checkpoint.done_count   # from previous run, if any
         failed: List[str] = []
 
-        print(
-            f"\n[FRD] {self.frd_id} ({self.frd_name}): "
-            f"{total} total TCs, {len(remaining)} remaining, "
-            f"{done_count} already done."
+        logger.info(
+            "[FRD] %s (%s): %d total TCs, %d remaining, %d already done.",
+            self.frd_id, self.frd_name, total, len(remaining), done_count
         )
 
         if not remaining:
-            print(f"  [FRD] {self.frd_id}: All TCs already complete. Skipping.")
+            logger.info("[FRD] %s: All TCs already complete. Skipping.", self.frd_id)
             return FRDWorkerResult(self.frd_id, self.frd_name, total, total)
 
         # ── Build input dicts for abatch ──────────────────────────────────────
@@ -141,9 +132,9 @@ class FRDWorker:
             for tc in remaining
         ]
 
-        print(
-            f"  [FRD] {self.frd_id}: Launching abatch "
-            f"({len(remaining)} TCs, max_concurrency={self.concurrency})..."
+        logger.info(
+            "[FRD] %s: Launching abatch (%d TCs, max_concurrency=%d)...",
+            self.frd_id, len(remaining), self.concurrency
         )
 
         # ── THE CORE: abatch processes N TCs in parallel ──────────────────────
@@ -159,7 +150,7 @@ class FRDWorker:
             tc_id = tc.get("tc_id", "UNKNOWN")
 
             if isinstance(result, Exception):
-                print(f"    [FAIL] {tc_id}: {result}")
+                logger.error("[FAIL] %s: %s", tc_id, result)
                 failed.append(tc_id)
                 continue
 
@@ -174,7 +165,7 @@ class FRDWorker:
                             row.expected_result, row.testdata, row.evidence_required,
                         ])
             except Exception as exc:
-                print(f"    [WARN] {tc_id}: CSV write error — {exc}")
+                logger.warning("%s: CSV write error — %s", tc_id, exc)
 
             # Write Gherkin feature file
             try:
@@ -182,7 +173,7 @@ class FRDWorker:
                     _strip_fences(result.cucumber_feature), encoding="utf-8"
                 )
             except Exception as exc:
-                print(f"    [WARN] {tc_id}: Feature write error — {exc}")
+                logger.warning("%s: Feature write error — %s", tc_id, exc)
 
             # Write Selenium script
             try:
@@ -190,7 +181,7 @@ class FRDWorker:
                     _strip_fences(result.selenium_script), encoding="utf-8"
                 )
             except Exception as exc:
-                print(f"    [WARN] {tc_id}: Selenium write error — {exc}")
+                logger.warning("%s: Selenium write error — %s", tc_id, exc)
 
             # Mark TC as done in checkpoint (persisted to disk)
             await self.checkpoint.mark_done(tc_id)
@@ -203,9 +194,9 @@ class FRDWorker:
                 except Exception:
                     pass   # never crash the worker on a callback failure
 
-        print(
-            f"  [FRD] {self.frd_id}: Done — "
-            f"{done_count}/{total} completed, {len(failed)} failed."
+        logger.info(
+            "[FRD] %s: Done — %d/%d completed, %d failed.",
+            self.frd_id, done_count, total, len(failed)
         )
 
         return FRDWorkerResult(

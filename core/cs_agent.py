@@ -11,7 +11,6 @@ All 3 are generated in the same LLM context window so the Selenium steps
 naturally align with the Gherkin steps with no manual context passing needed.
 """
 
-import os
 import json
 import csv
 import re
@@ -19,88 +18,15 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any
 
-from pydantic import BaseModel, Field
+from langchain_core.prompts import ChatPromptTemplate
 
-try:
-    from dotenv import load_dotenv
-    from langchain_core.prompts import ChatPromptTemplate
-except ImportError as _e:
-    raise ImportError(
-        f"Missing dependency: {_e}.\n"
-        "Run: pip install langchain-google-genai python-dotenv"
-    ) from _e
+from core.logger import logger
+from core.models import TestCaseRow, FullTestCaseOutput
+import core.constants as const
 
 
 # ==============================================================================
-# CONFIGURATION CONSTANTS
-# All tuneable defaults live here — never repeated elsewhere in the file.
-# Override via environment variables.
-# ==============================================================================
-
-def _get_env_or_default(default: str, *keys: str) -> str:
-    """Returns first non-empty value from the given env var names, or the default."""
-    for key in keys:
-        val = os.environ.get(key)
-        if val:
-            return val
-    return default
-
-DEFAULT_MODEL:          str = _get_env_or_default("gemini-3.1-flash-lite", "LLM_MODEL", "GEMINI_MODEL")  # LLM_MODEL preferred, GEMINI_MODEL for backward compat
-DEFAULT_BASE_URL:       str = os.environ.get("BASE_URL", "http://localhost")
-DEFAULT_INPUT_PATH:     str = "output/parsed_output.json"
-DEFAULT_OUTPUT_PATH:    str = "output"
-MAX_LLM_RETRIES:        int = 5
-RATE_LIMIT_BASE_WAIT_S: int = 30
-NETWORK_BASE_WAIT_S:    int = 5
-LLM_TEMPERATURE:      float = 0.2   # low = consistent, structured output
-SEPARATOR_WIDTH:        int = 62     # width of ===... banner lines in console output
-
-
-# ==============================================================================
-# 1. PYDANTIC SCHEMAS — single structured output for all 3 artifacts
-# ==============================================================================
-
-class TestCaseRow(BaseModel):
-    """One row in expected.csv — represents a single test step."""
-    testcase:          str = Field(description="Test case ID and title, e.g. 'TC-001 - User Registration'")
-    description:       str = Field(description="Detailed objective of the test case")
-    category:          str = Field(description="Test type/category e.g. 'UI Form Validation'")
-    preconditions:     str = Field(description="Pre-requisites before executing this step")
-    stepname:          str = Field(description="The exact action/step being performed")
-    expected_result:   str = Field(description="Expected system response or outcome for this step")
-    testdata:          str = Field(description="Specific input data, e.g. 'email: test@example.com | password: Test@123'")
-    evidence_required: str = Field(description="Proof needed, e.g. 'Screenshot of success toast', '200 OK in Network tab'")
-
-
-class FullTestCaseOutput(BaseModel):
-    """
-    Single structured response from the LLM containing all 3 generated artifacts.
-    One model call = all artifacts share context, so Selenium aligns with Gherkin.
-    """
-    csv_rows: List[TestCaseRow] = Field(
-        description="Ordered step-by-step rows to write into expected.csv"
-    )
-    cucumber_feature: str = Field(
-        description=(
-            "Complete raw Gherkin .feature file content. "
-            "No markdown fences. Start directly with tags/Feature keyword."
-        )
-    )
-    selenium_script: str = Field(
-        description=(
-            "Complete raw Python Selenium test script implementing every Gherkin step. "
-            "No markdown fences. Start directly with the module docstring or import."
-        )
-    )
-
-
-# ==============================================================================
-# 2. LLM INITIALISATION (Moved to core/llm_factory.py)
-# ==============================================================================
-
-
-# ==============================================================================
-# 3. HELPER — strip markdown code fences from LLM text fields
+# HELPER — strip markdown code fences from LLM text fields
 # ==============================================================================
 
 def _strip_fences(text: str) -> str:
@@ -111,7 +37,7 @@ def _strip_fences(text: str) -> str:
 
 
 # ==============================================================================
-# 4. UNIFIED PROMPT + CHAIN
+# UNIFIED PROMPT + CHAIN
 #    One ChatPromptTemplate → one LLM call → FullTestCaseOutput (all 3 artifacts)
 # ==============================================================================
 
@@ -217,7 +143,7 @@ def build_chain(bundle: Any) -> Any:
 def generate_all_artifacts(
     bundle: Any,
     tc: Dict[str, Any],
-    max_retries: int = MAX_LLM_RETRIES,
+    max_retries: int = const.MAX_LLM_RETRIES,
     base_url: str = "",
 ) -> FullTestCaseOutput:
     """
@@ -231,19 +157,19 @@ def generate_all_artifacts(
     chain = build_chain(bundle)
     for attempt in range(1, max_retries + 1):
         try:
-            return chain.invoke({"tc_json": json.dumps(tc, separators=(',', ':')), "base_url": base_url or DEFAULT_BASE_URL})  # compact: no whitespace = fewer tokens
+            return chain.invoke({"tc_json": json.dumps(tc, separators=(',', ':')), "base_url": base_url or const.DEFAULT_BASE_URL})  # compact: no whitespace = fewer tokens
         except Exception as exc:
             err = str(exc).lower()
             is_rate_limit  = "429" in err or "resource_exhausted" in err
             is_network_err = any(t in err for t in ["timeout", "connection", "httpcore", "httpx", "ssl"])
 
             if is_rate_limit:
-                wait = RATE_LIMIT_BASE_WAIT_S * attempt
-                print(f"         [WAIT] Rate limit hit. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                wait = const.RATE_LIMIT_BASE_WAIT_S * attempt
+                logger.warning("Rate limit hit. Retrying in %ds (attempt %d/%d)...", wait, attempt, max_retries)
                 time.sleep(wait)
             elif is_network_err and attempt < max_retries:
-                wait = NETWORK_BASE_WAIT_S * attempt
-                print(f"         [WAIT] Network/Timeout error. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                wait = const.NETWORK_BASE_WAIT_S * attempt
+                logger.warning("Network/Timeout error. Retrying in %ds (attempt %d/%d)...", wait, attempt, max_retries)
                 time.sleep(wait)
             else:
                 raise
@@ -252,13 +178,13 @@ def generate_all_artifacts(
 
 
 # ==============================================================================
-# 5. MAIN PIPELINE — one test case at a time, one LLM call per test case
+# MAIN PIPELINE — one test case at a time, one LLM call per test case
 # ==============================================================================
 
 def run_agent(
-    stage1_json_path: str = DEFAULT_INPUT_PATH,
-    out_dir_path: str = DEFAULT_OUTPUT_PATH,
-    model_name: str = DEFAULT_MODEL,
+    stage1_json_path: str = const.DEFAULT_INPUT_PATH,
+    out_dir_path: str = const.DEFAULT_OUTPUT_PATH,
+    model_name: str = const.DEFAULT_MODEL,
     base_url: str = "",
 ) -> None:
     """
@@ -271,7 +197,7 @@ def run_agent(
       <out_dir_path>/cucumber/<TC-ID>.feature  — Gherkin feature file
       <out_dir_path>/selenium/test_<TC-ID>.py  — Selenium Python test script
     """
-    app_base_url  = base_url or DEFAULT_BASE_URL
+    app_base_url  = base_url or const.DEFAULT_BASE_URL
     project_root = Path(__file__).parent.parent.resolve()
 
     json_path = (
@@ -299,34 +225,35 @@ def run_agent(
     for d in (out_dir, cuc_dir, sel_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    print("=" * SEPARATOR_WIDTH)
-    print("  Cucumber & Selenium Generator Agent")
-    print(f"  Model      : {model_name}")
-    print(f"  Input JSON : {json_path}")
-    print(f"  Output Dir : {out_dir}")
-    print(f"  Base URL   : {app_base_url}")
-    print("=" * SEPARATOR_WIDTH)
+    logger.info("=" * const.SEPARATOR_WIDTH)
+    logger.info("  Cucumber & Selenium Generator Agent")
+    logger.info("  Model      : %s", model_name)
+    logger.info("  Input JSON : %s", json_path)
+    logger.info("  Output Dir : %s", out_dir)
+    logger.info("  Base URL   : %s", app_base_url)
+    logger.info("=" * const.SEPARATOR_WIDTH)
 
     if not json_path.exists():
-        raise FileNotFoundError(f"[ERROR] Input file not found: {json_path}")
+        raise FileNotFoundError(f"Input file not found: {json_path}")
 
-    print(f"\n[1/3] Loading: {json_path.name}")
+    logger.info("[1/3] Loading: %s", json_path.name)
     with open(json_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
 
     test_cases = data.get("test_cases", [])
     total      = len(test_cases)
-    print(f"      Loaded {total} test cases from '{data.get('project', 'unknown')}' project.")
+    logger.info("      Loaded %d test cases from '%s' project.", total, data.get('project', 'unknown'))
 
     # Initialise LLM via LiteLLM factory
     try:
-        print(f"\n[2/3] Initialising LiteLLM ({model_name})...")
-        os.environ["GEMINI_MODEL"] = model_name
+        logger.info("[2/3] Initialising LiteLLM (%s)...", model_name)
+        import os as _os
+        _os.environ["GEMINI_MODEL"] = model_name
         from core.llm_factory import create_llm
         bundle = create_llm()
-        print(f"      [OK] Connected to LiteLLM router")
+        logger.info("      [OK] Connected to LiteLLM router")
     except Exception as e:
-        raise RuntimeError(f"[ERROR] LLM init failed: {e}. An API key is required.") from e
+        raise RuntimeError(f"LLM init failed: {e}. An API key is required.") from e
 
     # Write CSV header
     csv_headers = [
@@ -336,32 +263,18 @@ def run_agent(
     with open(csv_path, "w", newline="", encoding="utf-8") as fh:
         csv.writer(fh).writerow(csv_headers)
 
-    print(f"\n[3/3] Processing {total} test cases...\n")
+    logger.info("[3/3] Processing %d test cases...", total)
 
     for i, tc in enumerate(test_cases, start=1):
         tc_id = tc.get("tc_id", f"TC-{i:03d}")
         title = tc.get("title", "Unnamed")
 
-        print(f"  [{i:02d}/{total}] {tc_id} — {title}")
+        logger.info("  [%02d/%d] %s — %s", i, total, tc_id, title)
 
-        output = None
-        max_retries = 4
-        for attempt in range(1, max_retries + 1):
-            try:
-                output = generate_all_artifacts(bundle, tc, base_url=app_base_url)
-                break
-            except Exception as exc:
-                err_msg = str(exc)
-                is_rate_limit = any(k in err_msg.lower() for k in ("429", "rate", "cooldown", "resourceexhausted", "deployments"))
-                if attempt < max_retries and is_rate_limit:
-                    wait_sec = attempt * 3
-                    print(f"         [RATE LIMIT] Waiting {wait_sec}s before retry ({attempt}/{max_retries})...")
-                    time.sleep(wait_sec)
-                else:
-                    print(f"         [ERROR] LLM error ({exc}). Skipping test case.")
-                    break
-
-        if not output:
+        try:
+            output = generate_all_artifacts(bundle, tc, base_url=app_base_url)
+        except Exception as exc:
+            logger.error("  [SKIP] %s — LLM error: %s", tc_id, exc)
             continue
 
         # Write CSV rows
@@ -384,9 +297,9 @@ def run_agent(
             _strip_fences(output.selenium_script), encoding="utf-8"
         )
 
-    print("\n" + "=" * SEPARATOR_WIDTH)
-    print("  [DONE] All test cases processed successfully!")
-    print(f"      CSV written        : {csv_path}")
-    print(f"      Cucumber features  : {cuc_dir}")
-    print(f"      Selenium scripts   : {sel_dir}")
-    print("=" * SEPARATOR_WIDTH)
+    logger.info("=" * const.SEPARATOR_WIDTH)
+    logger.info("  [DONE] All test cases processed successfully!")
+    logger.info("      CSV written        : %s", csv_path)
+    logger.info("      Cucumber features  : %s", cuc_dir)
+    logger.info("      Selenium scripts   : %s", sel_dir)
+    logger.info("=" * const.SEPARATOR_WIDTH)

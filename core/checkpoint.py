@@ -19,6 +19,8 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict, Any
 
+from core.logger import logger
+
 
 class CheckpointManager:
     """
@@ -41,7 +43,7 @@ class CheckpointManager:
         if self._path.exists():
             try:
                 self._done: set = set(json.loads(self._path.read_text(encoding="utf-8")))
-                print(f"  [CHECKPOINT] Loaded {len(self._done)} already-completed TCs from {self._path.name}")
+                logger.info("[CHECKPOINT] Loaded %d already-completed TCs from %s", len(self._done), self._path.name)
             except (json.JSONDecodeError, OSError):
                 # Corrupt checkpoint — start fresh
                 self._done = set()

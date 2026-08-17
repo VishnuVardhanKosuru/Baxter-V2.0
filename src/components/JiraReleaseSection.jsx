@@ -6,7 +6,8 @@ import {
   Layers,
   Search,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  ChevronDown
 } from 'lucide-react';
 
 export default function JiraReleaseSection({
@@ -14,13 +15,63 @@ export default function JiraReleaseSection({
   onRunPipeline,
   jiraCredentials
 }) {
-  const [epicKey, setEpicKey] = useState('BANK-101');
+  const [epicKey, setEpicKey] = useState('');
   const [epicData, setEpicData] = useState(null);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  
+  // Track available epics from Jira
+  const [availableEpics, setAvailableEpics] = useState([]);
+  const [isFetchingEpics, setIsFetchingEpics] = useState(false);
+
+  // Custom Dropdown state
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Track selected FRDs
   const [selectedFrdIds, setSelectedFrdIds] = useState([]);
+
+  const handleLoadEpics = async () => {
+    setIsFetchingEpics(true);
+    setFetchError(null);
+    try {
+      const response = await fetch('/api/jira/epics', {
+        headers: {
+          'X-Jira-Url': jiraCredentials?.url || '',
+          'X-Jira-Email': jiraCredentials?.email || '',
+          'X-Jira-Token': jiraCredentials?.apiToken || ''
+        }
+      });
+      
+      let data;
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Server returned an invalid response (Status ${response.status}). The backend might be restarting.`);
+      }
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || data.message || 'Failed to fetch epics.');
+      }
+      setAvailableEpics(data.epics || []);
+      if (data.epics?.length > 0 && !epicKey) {
+        setEpicKey(data.epics[0].key);
+        setSearchQuery(data.epics[0].key);
+      }
+    } catch (err) {
+      console.error(err);
+      setFetchError(err.message);
+    } finally {
+      setIsFetchingEpics(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (jiraCredentials?.url && jiraCredentials?.apiToken) {
+      handleLoadEpics();
+    }
+  }, [jiraCredentials]);
 
   const handleFetchEpic = async () => {
     if (!epicKey.trim()) return;
@@ -38,7 +89,14 @@ export default function JiraReleaseSection({
           'X-Gemini-Key': jiraCredentials?.geminiApiKey || ''
         }
       });
-      const data = await response.json();
+      
+      let data;
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Server returned an invalid response (Status ${response.status}). The backend might be restarting.`);
+      }
 
       if (!response.ok || !data.success) {
         throw new Error(data.detail || data.message || 'Failed to fetch epic details.');
@@ -65,7 +123,7 @@ export default function JiraReleaseSection({
       alert('Please fetch an epic first.');
       return;
     }
-    onRunPipeline(epicKey);
+    onRunPipeline(epicKey, selectedFrdIds);
   };
 
   return (
@@ -94,19 +152,68 @@ export default function JiraReleaseSection({
         {/* PART 1 (LEFT): Epic Input & Fetch Button Box */}
         <div className="jira-column release-col">
           <div className="jira-section-box release-box">
-            <div className="jira-col-header">
-              <Search size={16} /> Fetch Epic
+            <div className="jira-col-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div><Search size={16} /> Fetch Epic</div>
+              <button 
+                onClick={handleLoadEpics} 
+                disabled={isFetchingEpics}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#0033A0', display: 'flex', alignItems: 'center', fontSize: '0.75rem' }}
+              >
+                <RefreshCw size={12} className={isFetchingEpics ? 'spin' : ''} style={{ marginRight: '4px' }} />
+                Reload Epics
+              </button>
             </div>
 
             <div className="release-controls-inner" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-              <input
-                type="text"
-                placeholder="Enter Issue Key (e.g., BANK-101)"
-                value={epicKey}
-                onChange={(e) => setEpicKey(e.target.value)}
-                disabled={isFetching || pipelineState === 'running'}
-                style={{ padding: '0.5rem', borderRadius: 6, border: '1px solid #CBD5E1', fontSize: '0.875rem' }}
-              />
+              <div style={{ position: 'relative' }}>
+                <div
+                  style={{ display: 'flex', border: '1px solid #CBD5E1', borderRadius: 6, padding: '0.5rem', background: '#fff', cursor: 'text' }}
+                  onClick={() => setIsDropdownOpen(true)}
+                >
+                  <input
+                    type="text"
+                    placeholder={availableEpics.length > 0 ? "Search or Select Epic..." : "No Epics Loaded"}
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setIsDropdownOpen(true);
+                      setEpicKey(e.target.value);
+                    }}
+                    onFocus={() => setIsDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setIsDropdownOpen(false), 200)}
+                    style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.875rem' }}
+                    disabled={isFetching || pipelineState === 'running'}
+                  />
+                  <ChevronDown size={16} style={{ color: '#64748b', alignSelf: 'center', cursor: 'pointer' }} onClick={() => setIsDropdownOpen(!isDropdownOpen)} />
+                </div>
+
+                {isDropdownOpen && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, marginTop: 4, zIndex: 10, maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}>
+                    {availableEpics
+                      .filter(epic => epic.key.toLowerCase().includes(searchQuery.toLowerCase()))
+                      .map(epic => (
+                      <div
+                        key={epic.key}
+                        style={{ padding: '0.5rem', cursor: 'pointer', fontSize: '0.875rem', borderBottom: '1px solid #f1f5f9' }}
+                        onClick={() => {
+                          setEpicKey(epic.key);
+                          setSearchQuery(epic.key);
+                          setIsDropdownOpen(false);
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      >
+                        <strong>{epic.key}</strong>
+                      </div>
+                    ))}
+                    {availableEpics.length === 0 && (
+                      <div style={{ padding: '0.5rem', fontSize: '0.875rem', color: '#64748b', textAlign: 'center' }}>
+                        Click "Reload Epics" to fetch.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <button
                 type="button"
@@ -134,7 +241,7 @@ export default function JiraReleaseSection({
           {/* Top Box: FRD */}
           <div className="jira-section-box frs-box">
             <div className="jira-col-header blue-header">
-              <FileText size={15} /> FRDs ({epicData?.frds?.length || 0})
+              <FileText size={15} /> Selected FRDs ({selectedFrdIds.length}/{epicData?.frds?.length || 0})
             </div>
 
             <div className="compact-items-grid" style={{ maxHeight: '130px', overflowY: 'auto' }}>
@@ -167,16 +274,21 @@ export default function JiraReleaseSection({
           {/* Bottom Box: Manual Test Cases */}
           <div className="jira-section-box mntc-box">
             <div className="jira-col-header blue-header">
-              <ListCheck size={15} /> Manual test cases ({epicData?.manualTestCases?.length || 0})
+              <ListCheck size={15} /> Selected Test Cases ({
+                epicData?.manualTestCases?.filter((_, idx) => {
+                  const relatedFrd = epicData?.frds[idx];
+                  return relatedFrd ? selectedFrdIds.includes(relatedFrd.id) : false;
+                }).length || 0
+              }/{epicData?.manualTestCases?.length || 0})
             </div>
 
             <div className="compact-items-grid" style={{ maxHeight: '130px', overflowY: 'auto' }}>
               {!epicData && !isFetching && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Enter an Epic Key to fetch test cases.</div>}
               {epicData && epicData.manualTestCases.length === 0 && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>No Test Cases found.</div>}
               {epicData?.manualTestCases.map((tc, idx) => {
-                // Determine if this test case is "active" based on whether any FRDs are selected.
-                // Normally you might map test cases to specific FRDs, but here we just show all test cases for the epic.
-                const isActive = selectedFrdIds.length > 0;
+                // Determine if this test case is "active" based on whether its paired FRD is selected
+                const relatedFrd = epicData?.frds[idx];
+                const isActive = relatedFrd ? selectedFrdIds.includes(relatedFrd.id) : false;
                 return (
                   <div
                     key={tc.id}

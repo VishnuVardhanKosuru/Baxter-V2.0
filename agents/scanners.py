@@ -32,6 +32,7 @@ from core.models import (
     DocumentAST,
     TestCaseModel,
 )
+from core.logger import logger
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ class ModuleFolderScanner:
         """
         packages: List[ModulePackage] = []
         if not self.root_dir.exists():
-            print(f"[ERROR] Directory not found: {self.root_dir}")
+            logger.error("Directory not found: %s", self.root_dir)
             return packages
 
         # 1. Check if root directory itself contains FRD / TC documents
@@ -205,7 +206,7 @@ class FRDModuleParser:
         try:
             doc = docx.Document(str(file_path))
         except Exception as exc:
-            print(f"  [ERROR] Failed to read FRD docx {file_path.name}: {exc}")
+            logger.error("Failed to read FRD docx %s: %s", file_path.name, exc)
             return ast
 
         # Seed with a generic header section to catch pre-requirement paragraphs.
@@ -360,7 +361,7 @@ class TestCaseModuleParser:
         try:
             doc = docx.Document(str(file_path))
         except Exception as exc:
-            print(f"  [ERROR] Failed to read TC docx {file_path.name}: {exc}")
+            logger.error("Failed to read TC docx %s: %s", file_path.name, exc)
             return test_cases
 
         if not doc.tables:

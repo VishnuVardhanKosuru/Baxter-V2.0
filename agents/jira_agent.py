@@ -69,7 +69,8 @@ class JiraClient:
         return ""
 
     def get_issue(self, issue_key: str) -> Dict[str, Any]:
-        """Fetches detailed metadata for a single Jira issue by key."""
+        """Fetches detailed metadata for a single Jira issue by key. 
+        If the issue is an Epic, it also fetches and merges attachments from its child issues."""
         url = f"{self.jira_url}/rest/api/3/issue/{issue_key}?expand=renderedFields"
         response = self.session.get(url)
         if response.status_code == 404:
@@ -77,7 +78,31 @@ class JiraClient:
         elif response.status_code in (401, 403):
             raise PermissionError("Jira authentication failed. Check JIRA_EMAIL and JIRA_API_TOKEN in .env.")
         response.raise_for_status()
-        return response.json()
+        issue_data = response.json()
+
+        # If it is an Epic, fetch its children and merge their attachments
+        issuetype = issue_data.get("fields", {}).get("issuetype", {}).get("name", "")
+        if issuetype == "Epic":
+            try:
+                payload = {
+                    "jql": f"parent = {issue_key} OR \"Epic Link\" = {issue_key}",
+                    "maxResults": 100,
+                    "fields": ["attachment"]
+                }
+                search_url = f"{self.jira_url}/rest/api/3/search/jql"
+                search_resp = self.session.post(search_url, json=payload)
+                if search_resp.status_code == 200:
+                    children = search_resp.json().get("issues", [])
+                    if "attachment" not in issue_data["fields"] or issue_data["fields"]["attachment"] is None:
+                        issue_data["fields"]["attachment"] = []
+                    
+                    for child in children:
+                        child_atts = child.get("fields", {}).get("attachment", [])
+                        issue_data["fields"]["attachment"].extend(child_atts)
+            except Exception:
+                pass # Fail silently if child fetch fails, just return the Epic data
+
+        return issue_data
 
     def get_all_projects(self) -> List[str]:
         """Fetches project keys from Jira Cloud."""
