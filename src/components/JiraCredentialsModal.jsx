@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyRound, Mail, Link, X, Check, ShieldCheck, Sparkles, UploadCloud, ArrowLeft } from 'lucide-react';
+import { KeyRound, Mail, Link, Check, ShieldCheck, Sparkles, UploadCloud, ArrowLeft } from 'lucide-react';
 
 export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialCredentials }) {
   const [modalMode, setModalMode] = useState('jira'); // 'jira' or 'manual'

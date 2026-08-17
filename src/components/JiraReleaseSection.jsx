@@ -10,6 +10,23 @@ import {
   ChevronDown
 } from 'lucide-react';
 
+/**
+ * Reads a response body as JSON, surfacing a clear message when the backend
+ * returns HTML (e.g. a proxy error page while the server is restarting) instead
+ * of the JSON the caller expects.
+ */
+async function parseJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (parseError) {
+    console.error('Non-JSON response from backend:', parseError, text.slice(0, 200));
+    throw new Error(
+      `Server returned an invalid response (status ${response.status}). The backend may be restarting.`,
+    );
+  }
+}
+
 export default function JiraReleaseSection({
   pipelineState,
   onRunPipeline,
@@ -31,7 +48,7 @@ export default function JiraReleaseSection({
   // Track selected FRDs
   const [selectedFrdIds, setSelectedFrdIds] = useState([]);
 
-  const handleLoadEpics = async () => {
+  const handleLoadEpics = React.useCallback(async () => {
     setIsFetchingEpics(true);
     setFetchError(null);
     try {
@@ -42,36 +59,32 @@ export default function JiraReleaseSection({
           'X-Jira-Token': jiraCredentials?.apiToken || ''
         }
       });
-      
-      let data;
-      const text = await response.text();
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        throw new Error(`Server returned an invalid response (Status ${response.status}). The backend might be restarting.`);
-      }
 
+      const data = await parseJsonResponse(response);
       if (!response.ok || !data.success) {
         throw new Error(data.detail || data.message || 'Failed to fetch epics.');
       }
-      setAvailableEpics(data.epics || []);
-      if (data.epics?.length > 0 && !epicKey) {
-        setEpicKey(data.epics[0].key);
-        setSearchQuery(data.epics[0].key);
-      }
+
+      const epics = data.epics || [];
+      setAvailableEpics(epics);
+      setEpicKey((current) => {
+        if (current || epics.length === 0) return current;
+        setSearchQuery(epics[0].key);
+        return epics[0].key;
+      });
     } catch (err) {
       console.error(err);
       setFetchError(err.message);
     } finally {
       setIsFetchingEpics(false);
     }
-  };
+  }, [jiraCredentials]);
 
   React.useEffect(() => {
     if (jiraCredentials?.url && jiraCredentials?.apiToken) {
       handleLoadEpics();
     }
-  }, [jiraCredentials]);
+  }, [jiraCredentials, handleLoadEpics]);
 
   const handleFetchEpic = async () => {
     if (!epicKey.trim()) return;
@@ -90,14 +103,7 @@ export default function JiraReleaseSection({
         }
       });
       
-      let data;
-      const text = await response.text();
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        throw new Error(`Server returned an invalid response (Status ${response.status}). The backend might be restarting.`);
-      }
-
+      const data = await parseJsonResponse(response);
       if (!response.ok || !data.success) {
         throw new Error(data.detail || data.message || 'Failed to fetch epic details.');
       }
@@ -247,7 +253,7 @@ export default function JiraReleaseSection({
             <div className="compact-items-grid" style={{ maxHeight: '130px', overflowY: 'auto' }}>
               {!epicData && !isFetching && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Enter an Epic Key to fetch FRDs.</div>}
               {epicData && epicData.frds.length === 0 && <div style={{ fontSize: '0.8rem', color: '#64748b' }}>No FRDs found.</div>}
-              {epicData?.frds.map((frd, idx) => {
+              {epicData?.frds.map((frd) => {
                 const isSelected = selectedFrdIds.includes(frd.id);
                 return (
                   <label

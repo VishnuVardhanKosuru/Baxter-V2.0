@@ -14,11 +14,13 @@ Usage:
     await checkpoint.mark_done(tc_id)
 """
 
-import json
 import asyncio
+import json
+import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
+from core import constants as const
 from core.logger import logger
 
 
@@ -36,19 +38,28 @@ class CheckpointManager:
             frd_dir: Path to the FRD output directory (e.g. output/jobs/<id>/FRD-001_Name/).
                      checkpoint.json is created inside this directory.
         """
-        self._path = frd_dir / "checkpoint.json"
+        self._path = Path(frd_dir) / const.NAME_CHECKPOINT
         self._lock = asyncio.Lock()
+        self._done: set = set()
 
         # Load existing checkpoint (crash-resume scenario)
         if self._path.exists():
             try:
-                self._done: set = set(json.loads(self._path.read_text(encoding="utf-8")))
-                logger.info("[CHECKPOINT] Loaded %d already-completed TCs from %s", len(self._done), self._path.name)
-            except (json.JSONDecodeError, OSError):
-                # Corrupt checkpoint — start fresh
-                self._done = set()
-        else:
-            self._done = set()
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    self._done = set(loaded)
+                    logger.info(
+                        "[CHECKPOINT] Loaded %d already-completed TCs from %s",
+                        len(self._done), self._path.name,
+                    )
+                else:
+                    logger.warning(
+                        "[CHECKPOINT] %s is not a JSON list — starting fresh.", self._path.name
+                    )
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                logger.warning(
+                    "[CHECKPOINT] Could not read %s (%s) — starting fresh.", self._path.name, exc
+                )
 
     def is_done(self, tc_id: str) -> bool:
         """Returns True if this TC-ID has already been processed."""
@@ -57,15 +68,23 @@ class CheckpointManager:
     async def mark_done(self, tc_id: str) -> None:
         """
         Marks a TC-ID as done and persists the checkpoint to disk.
-        Uses asyncio.Lock to prevent concurrent writes corrupting the file.
+
+        Writes to a temporary file and then replaces the real one, so a crash
+        mid-write leaves the previous valid checkpoint intact rather than a
+        truncated file. asyncio.Lock serialises concurrent writers.
+
+        A write failure is logged but not raised: losing a checkpoint entry only
+        costs re-work on resume, whereas failing here would discard a test case
+        whose artifacts are already on disk.
         """
         async with self._lock:
             self._done.add(tc_id)
-            # Write atomically: build full list then dump
-            self._path.write_text(
-                json.dumps(sorted(self._done), indent=2),
-                encoding="utf-8",
-            )
+            tmp_path = self._path.with_suffix(".json.tmp")
+            try:
+                tmp_path.write_text(json.dumps(sorted(self._done), indent=2), encoding="utf-8")
+                os.replace(tmp_path, self._path)
+            except OSError as exc:
+                logger.warning("[CHECKPOINT] Could not persist %s: %s", self._path.name, exc)
 
     def get_remaining(self, all_tcs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

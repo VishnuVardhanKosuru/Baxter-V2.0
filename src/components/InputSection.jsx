@@ -22,7 +22,6 @@ export default function InputSection({
       <JiraReleaseSection
         pipelineState={pipelineState}
         onRunPipeline={onRunPipeline}
-        onSwitchToManualUpload={() => setActiveMode('manual')}
         jiraCredentials={jiraCredentials}
       />
     );

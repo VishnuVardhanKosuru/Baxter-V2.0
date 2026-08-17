@@ -1,100 +1,37 @@
 """
 calculate_totals.py
 -------------------
-Post-run cost aggregation script for the Baxter platform.
+Post-run cost aggregation entry-point for the Baxter platform.
 
 Reads the per-call cost log written by ``core.llm_factory._track_cost_callback``
-(``output/cost_tracking.txt``) and produces a human-readable summary of total
-tokens and cost, grouped by API key alias and pipeline phase (Parser / Generator).
+(output/cost_tracking.txt) and writes a human-readable summary of total tokens
+and cost, grouped by API key alias and pipeline phase (Parser / Generator).
 
-Output: ``output/cost_totals.txt``
+The parsing and formatting live in ``core.cost_report`` so this script and the
+/api/cost/* endpoints share one implementation.
+
+Output: output/cost_totals.txt
 
 Usage
 -----
-  python calculate_totals.py          # run standalone
-  # or called automatically at end of run_pipeline.py
+  python calculate_totals.py     # standalone
+  # also invoked automatically as Stage 3 of run_pipeline.py
 """
 
-import os
-import re
-from collections import defaultdict
+from dotenv import load_dotenv
 
-def main():
-    """
-    Parse cost_tracking.txt and write an aggregated cost_totals.txt report.
+load_dotenv()
 
-    Reads each log line matching the pattern:
-      [timestamp] [Phase] Model: <name> (Key N) | Tokens: X In, Y Out | Cost: $Z
+from core.cost_report import write_totals_report
+from core.logger import logger
 
-    Aggregates tokens and cost by (key_alias, phase) and writes a formatted
-    summary with per-key, per-phase subtotals and a grand total.
 
-    Files
-    -----
-    Input : output/cost_tracking.txt  (written by llm_factory.py)
-    Output: output/cost_totals.txt    (human-readable report)
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_file = os.path.join(base_dir, "output", "cost_tracking.txt")
-    out_file = os.path.join(base_dir, "output", "cost_totals.txt")
+def main() -> None:
+    """Aggregates the cost log and writes output/cost_totals.txt."""
+    out_file = write_totals_report()
+    if out_file is None:
+        logger.info("No cost totals generated — the cost log is missing or empty.")
 
-    if not os.path.exists(log_file):
-        print(f"Log file not found: {log_file}")
-        return
-
-    # metrics structure: totals[key_alias][phase] = {"in": 0, "out": 0, "cost": 0.0}
-    totals = defaultdict(lambda: defaultdict(lambda: {"in": 0, "out": 0, "cost": 0.0}))
-
-    line_pattern = re.compile(
-        r"\[.*?\]\s+"
-        r"(?:\[(.*?)\]\s+)?"                # Optional phase [Parser] or [Generator]
-        r"Model:\s+.*?\((.*?)\)\s+\|\s+"    # Key alias inside parenthesis
-        r"Tokens:\s+(\d+)\s+In,\s+(\d+)\s+Out\s+\|\s+"
-        r"Cost:\s+\$([\d\.]+)"
-    )
-
-    with open(log_file, "r", encoding="utf-8") as f:
-        for line in f:
-            m = line_pattern.search(line)
-            if m:
-                phase = m.group(1) or "Generator"
-                key = m.group(2)
-                in_toks = int(m.group(3))
-                out_toks = int(m.group(4))
-                cost = float(m.group(5))
-
-                totals[key][phase]["in"] += in_toks
-                totals[key][phase]["out"] += out_toks
-                totals[key][phase]["cost"] += cost
-
-    if not totals:
-        print("No parsable data found in log file.")
-        return
-
-    with open(out_file, "w", encoding="utf-8") as f:
-        f.write("="*50 + "\n")
-        f.write("           COST & TOKEN TOTALS\n")
-        f.write("="*50 + "\n\n")
-
-        grand_cost = 0.0
-        
-        for key, phases in totals.items():
-            f.write(f"--- {key} ---\n")
-            key_cost = 0.0
-            for phase, metrics in phases.items():
-                f.write(f"  [{phase}]\n")
-                f.write(f"    Input Tokens : {metrics['in']:,}\n")
-                f.write(f"    Output Tokens: {metrics['out']:,}\n")
-                f.write(f"    Phase Cost   : ${metrics['cost']:.6f}\n\n")
-                key_cost += metrics["cost"]
-            f.write(f"  > Total {key} Cost: ${key_cost:.6f}\n\n")
-            grand_cost += key_cost
-            
-        f.write("="*50 + "\n")
-        f.write(f"GRAND TOTAL COST: ${grand_cost:.6f}\n")
-        f.write("="*50 + "\n")
-
-    print(f"Calculated totals and saved to {out_file}")
 
 if __name__ == "__main__":
     main()

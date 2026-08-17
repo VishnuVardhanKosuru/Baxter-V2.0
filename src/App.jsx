@@ -184,7 +184,6 @@ export default function App() {
         throw new Error(s1Data.detail || s1Data.message || 'Stage 1 parsing failed');
       }
 
-      const s1Result = s1Data.result;
       const s1Time = (Date.now() - startTime) / 1000;
 
       setStepsState({

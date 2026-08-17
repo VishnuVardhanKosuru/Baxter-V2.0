@@ -1,7 +1,16 @@
 import React from 'react';
 import { Check, Cpu, Loader2, X } from 'lucide-react';
 
-export default function PipelineTracker({ stepsState }) {
+const formatDuration = (seconds) => {
+  if (!seconds || seconds <= 0) return null;
+  return seconds < 60
+    ? `${seconds.toFixed(1)}s`
+    : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(0)}s`;
+};
+
+export default function PipelineTracker({ stepsState, totalExecutionTime }) {
+  const totalElapsed = formatDuration(totalExecutionTime);
+
   const stepsConfig = [
     {
       id: 'parsing',
@@ -37,6 +46,17 @@ export default function PipelineTracker({ stepsState }) {
             Real-time stage flow for FRD and manual test case document parsing and test case generation.
           </div>
         </div>
+
+        {totalElapsed && (
+          <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600, letterSpacing: '0.04em' }}>
+              TOTAL ELAPSED
+            </div>
+            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0033A0', fontVariantNumeric: 'tabular-nums' }}>
+              {totalElapsed}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Horizontal Connected Node Stepper Pipeline Flow */}
@@ -45,7 +65,9 @@ export default function PipelineTracker({ stepsState }) {
           {stepsConfig.map((step, idx) => {
             const stepData = stepsState[step.id] || { status: 'pending' };
             const status = stepData.status; // 'pending' | 'running' | 'success' | 'failed'
-            
+            const stepElapsed = status === 'success' ? formatDuration(stepData.executionTime) : null;
+
+
             // Connecting line status to the next node
             let lineClass = 'pending';
             if (status === 'success') {
@@ -73,6 +95,9 @@ export default function PipelineTracker({ stepsState }) {
                     <div className="node-title" style={status === 'failed' ? { color: '#DC2626' } : {}}>{step.title}</div>
                     <div className="node-status-sub" style={{ fontSize: '0.75rem', color: status === 'success' ? '#059669' : '#64748B', fontWeight: 600, marginTop: '2px' }}>
                       {step.subtitles[status] || status}
+                      {stepElapsed && (
+                        <span style={{ color: '#94A3B8', fontWeight: 600 }}> · {stepElapsed}</span>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -34,26 +34,8 @@ class DocumentAST:
 
 
 @dataclass
-class FeatureModel:
-    """Represents a Functional Requirement (FR) extracted from FRD."""
-    feature_id: str
-    feature_name: str
-    module_folder: str = ""
-    source_file: str = ""
-    description: str = ""
-    actors: List[str] = field(default_factory=list)
-    pre_conditions: List[str] = field(default_factory=list)
-    trigger: str = ""
-    main_flow: List[str] = field(default_factory=list)
-    exception_flow: List[str] = field(default_factory=list)
-    post_conditions: List[str] = field(default_factory=list)
-    business_rules: List[str] = field(default_factory=list)
-    priority: str = ""
-
-
-@dataclass
 class FeatureContextModel:
-    """Rich domain context extracted from FRD for a specific feature."""
+    """Rich domain context extracted from an FRD section for a specific feature."""
     feature_name: str
     description: str
     trigger: str = ""

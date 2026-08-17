@@ -1,16 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   X,
   DollarSign,
-  Cpu,
   Download,
   RefreshCw,
   Zap,
   Activity,
-  Layers,
-  FileText,
-  Clock,
-  Key
+  Layers
 } from 'lucide-react';
 
 export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }) {

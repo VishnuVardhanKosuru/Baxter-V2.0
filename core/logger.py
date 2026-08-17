@@ -7,45 +7,33 @@ All backend modules should import the logger from here:
 
     from core.logger import logger
 
-The logger writes to **stdout** with structured formatting so every action
-is visible in the terminal where the backend server runs.
+Writes to stdout, and additionally to logs/baxter.log when LOG_TO_FILE=true.
 
 Format:
     [2024-08-17 11:30:00] [INFO   ] [server] Starting Baxter API server...
     [2024-08-17 11:30:01] [WARNING] [llm_factory] Rate limit hit on key 2
 
-Log levels:
-    DEBUG    — verbose internals (hidden by default; set LOG_LEVEL=DEBUG)
-    INFO     — normal operations (default)
+Log levels (LOG_LEVEL env var, default INFO):
+    DEBUG    — verbose internals
+    INFO     — normal operations
     WARNING  — recoverable issues, fallbacks triggered
     ERROR    — failures that need attention
     CRITICAL — unrecoverable errors
 """
 
 import logging
-import os
 import sys
 
+from core import constants as const
 
-# ── Configuration ────────────────────────────────────────────────────────────
-
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
-LOG_FORMAT = "[%(asctime)s] [%(levelname)-7s] [%(module)-14s] %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-
-# ── Logger setup ─────────────────────────────────────────────────────────────
 
 def _setup_logger() -> logging.Logger:
     """
     Creates and configures the root 'baxter' logger.
 
-    - Single StreamHandler writing to sys.stdout (visible in the backend terminal).
-    - Level controlled by LOG_LEVEL env var (default: INFO).
-    - Uses structured format with timestamps, levels, and module names.
-
-    Returns:
-        Configured logging.Logger instance.
+    Handlers: stdout always; a rotating file handler when LOG_TO_FILE=true.
+    Never raises — if the log directory cannot be created, file logging is
+    skipped and stdout logging still works.
     """
     _logger = logging.getLogger("baxter")
 
@@ -53,16 +41,31 @@ def _setup_logger() -> logging.Logger:
     if _logger.handlers:
         return _logger
 
-    _logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+    level = getattr(logging, const.LOG_LEVEL, logging.INFO)
+    _logger.setLevel(level)
+    formatter = logging.Formatter(const.LOG_FORMAT, datefmt=const.LOG_DATE_FORMAT)
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(level)
+    stream_handler.setFormatter(formatter)
+    _logger.addHandler(stream_handler)
 
-    _logger.addHandler(handler)
+    if const.LOG_TO_FILE:
+        try:
+            from logging.handlers import RotatingFileHandler
 
-    # Prevent log messages from propagating to the root logger
-    # (avoids duplicate output when uvicorn's own logging is active)
+            const.DIR_LOGS.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                const.LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+            )
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
+            _logger.addHandler(file_handler)
+        except OSError as exc:
+            _logger.warning("File logging disabled — cannot write %s: %s", const.LOG_FILE, exc)
+
+    # Prevent propagation to the root logger (avoids duplicate output when
+    # uvicorn's own logging is active).
     _logger.propagate = False
 
     return _logger

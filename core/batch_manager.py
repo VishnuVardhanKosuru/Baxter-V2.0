@@ -21,14 +21,13 @@ Architecture:
 SSE consumers call batch_manager.get_job(job_id) to read live state.
 """
 
-import asyncio
-import os
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from core.constants import DIR_JOBS
 from typing import Dict, List, Optional, Any
+
+from core import constants as const
 from core.logger import logger
 
 
@@ -103,7 +102,7 @@ class BatchJobManager:
         Returns the job_id string.
         """
         job_id  = str(uuid.uuid4())[:8]
-        job_dir = DIR_JOBS / job_id
+        job_dir = const.DIR_JOBS / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         self._jobs[job_id] = BatchJob(job_id=job_id, output_root=job_dir)
         logger.info("[BATCH] Job created: %s → %s", job_id, job_dir)
@@ -124,6 +123,40 @@ class BatchJobManager:
             for j in self._jobs.values()
         ]
 
+    @staticmethod
+    def _resolve_concurrency(provider: str) -> int:
+        """
+        Determines how many test cases may be in flight simultaneously.
+
+        WORKER_CONCURRENCY overrides everything when set. Otherwise it is derived
+        from the provider's RPM times the number of active keys, so abatch uses
+        the available quota fully without exceeding it, capped by
+        LLM_MAX_CONCURRENCY to bound memory use.
+        """
+        override = const.env_int("WORKER_CONCURRENCY", 0)
+        if override > 0:
+            logger.info("[BATCH] Concurrency from WORKER_CONCURRENCY: %d", override)
+            return override
+
+        from core.llm_factory import collect_keys
+
+        rpm_env, _, key_prefix, default_rpm, _ = const.PROVIDER_ENV_MAP.get(
+            provider, const.PROVIDER_ENV_MAP["gemini"]
+        )
+        rpm = const.env_int(rpm_env, default_rpm)
+        num_keys = len(collect_keys(key_prefix))
+
+        if num_keys <= 0:
+            logger.warning("[BATCH] No %s keys detected — falling back to %d.", key_prefix, rpm)
+            return rpm
+
+        concurrency = min(rpm * num_keys, const.LLM_MAX_CONCURRENCY)
+        logger.info(
+            "[BATCH] Auto-concurrency: %d RPM x %d key(s) = %d (cap %d)",
+            rpm, num_keys, concurrency, const.LLM_MAX_CONCURRENCY,
+        )
+        return concurrency
+
     async def run_batch(self, job_id: str, frd_inputs: List[Dict[str, Any]]) -> None:
         """
         Main batch execution coroutine — run as a background asyncio Task.
@@ -143,12 +176,15 @@ class BatchJobManager:
           - Within each FRD, TCs are processed in PARALLEL via chain.abatch()
         """
         # Late imports to avoid circular dependency and allow server to start fast
-        from core.llm_factory import create_llm
+        from agents.cs_agent import build_chain, SYSTEM_PROMPT_TEXT
+        from agents.frd_worker import FRDWorker
         from core.checkpoint import CheckpointManager
-        from core.frd_worker import FRDWorker
-        from core.cs_agent import build_chain, SYSTEM_PROMPT_TEXT
+        from core.llm_factory import create_llm
 
-        job        = self._jobs[job_id]
+        job = self._jobs.get(job_id)
+        if job is None:
+            logger.error("[BATCH] run_batch called for unknown job '%s'.", job_id)
+            return
         job.status = JobStatus.RUNNING
 
         # ── ONE shared LLM bundle — provider-aware, multi-key load balanced ──
@@ -160,32 +196,23 @@ class BatchJobManager:
             logger.error("[BATCH] %s: LLM init failed — %s", job_id, exc)
             return
 
-        base_url = os.getenv("BASE_URL", "http://localhost")
+        base_url = const.DEFAULT_BASE_URL
 
-        # ── Compute optimal concurrency automatically ──────────────────────────
-        # If WORKER_CONCURRENCY is explicitly set, use it.
-        # Otherwise compute from RPM × number of active keys so abatch fully
-        # utilises available quota without under- or over-shooting.
-        if os.getenv("WORKER_CONCURRENCY"):
-            concurrency = int(os.getenv("WORKER_CONCURRENCY"))
-        else:
-            from core.llm_factory import _collect_keys
-            provider    = bundle.provider
-            rpm_env     = "GEMINI_RPM" if provider == "gemini" else (
-                          "OPENAI_RPM" if provider == "openai" else "ANTHROPIC_RPM")
-            key_prefix  = "GEMINI_API_KEY" if provider == "gemini" else (
-                          "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY")
-            rpm         = int(os.getenv(rpm_env, "50"))
-            num_keys    = len(_collect_keys(key_prefix))
-            concurrency = min(rpm * num_keys, 500)   # cap at 500 to avoid memory pressure
-            logger.info("[BATCH] Auto-concurrency: %d RPM × %d keys = %d", rpm, num_keys, concurrency)
+        concurrency = self._resolve_concurrency(bundle.provider)
 
         # ── SEQUENTIAL: one FRD fully completes before the next starts ───────
         for frd in frd_inputs:
-            frd_id   = frd["frd_id"]
-            frd_name = frd["frd_name"]
+            frd_id   = frd.get("frd_id", "FRD-UNKNOWN")
+            frd_name = frd.get("frd_name", "module")
             frd_dir  = job.output_root / f"{frd_id}_{frd_name}"
-            frd_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                frd_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                logger.error("[BATCH] %s: cannot create %s — %s", job_id, frd_dir, exc)
+                job.frds[frd_id] = FRDProgress(
+                    frd_id=frd_id, frd_name=frd_name, status=JobStatus.FAILED
+                )
+                continue
 
             tc_list = frd.get("test_cases", [])
 
@@ -244,8 +271,17 @@ class BatchJobManager:
                 bundle.teardown_cache()  # delete Gemini cache (no-op for OpenAI/Anthropic)
         # ── END SEQUENTIAL LOOP ───────────────────────────────────────────────
 
-        job.status = JobStatus.DONE
-        logger.info("[BATCH] %s: All FRDs complete. Job done ✅", job_id)
+        # The job only counts as DONE if at least one FRD produced output —
+        # otherwise the UI would show a green finish for a run that generated
+        # nothing at all.
+        statuses = [p.status for p in job.frds.values()]
+        if statuses and all(s == JobStatus.FAILED for s in statuses):
+            job.status = JobStatus.FAILED
+            job.error = "All FRDs failed. See server logs for details."
+            logger.error("[BATCH] %s: every FRD failed — job marked FAILED.", job_id)
+        else:
+            job.status = JobStatus.DONE
+            logger.info("[BATCH] %s: all FRDs complete — job done.", job_id)
 
 
 # ── Singleton — shared across all FastAPI requests ────────────────────────────

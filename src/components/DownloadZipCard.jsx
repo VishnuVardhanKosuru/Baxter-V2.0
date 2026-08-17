@@ -12,7 +12,11 @@ export default function DownloadZipCard() {
       // Direct streaming download of generated test suite from backend /api/download-zip
       const res = await fetch('/api/download-zip');
       if (!res.ok) {
-        throw new Error(`Download failed with status ${res.status}`);
+        throw new Error(
+          res.status === 404
+            ? 'No generated test files are available yet. Run the pipeline first.'
+            : `Download failed with status ${res.status}.`,
+        );
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -25,7 +29,7 @@ export default function DownloadZipCard() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to download ZIP archive:', err);
-      setDownloadError('Could not download test artifacts ZIP.');
+      setDownloadError(err.message || 'Could not download test artifacts ZIP.');
     } finally {
       setIsZipping(false);
     }
@@ -58,6 +62,20 @@ export default function DownloadZipCard() {
           {isZipping ? 'Creating ZIP...' : 'Download Output (.zip)'}
         </button>
       </div>
+
+      {downloadError && (
+        <div style={{
+          marginTop: '0.85rem',
+          padding: '0.6rem 0.9rem',
+          backgroundColor: '#FEF2F2',
+          border: '1px solid #FCA5A5',
+          color: '#991B1B',
+          borderRadius: 8,
+          fontSize: '0.825rem',
+        }}>
+          {downloadError}
+        </div>
+      )}
     </section>
   );
 }

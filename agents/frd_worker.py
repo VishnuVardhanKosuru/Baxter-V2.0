@@ -1,10 +1,10 @@
 """
-core/frd_worker.py
-──────────────────
+agents/frd_worker.py
+────────────────────
 Async parallel worker for a single FRD.
 
-Replaces the sequential `for` loop in c&s_agent.py with `chain.abatch()`,
-enabling 50 TCs to be processed in parallel using a single LiteLLM LLM instance.
+Replaces the sequential `for` loop in cs_agent.run_agent() with `chain.abatch()`,
+enabling many test cases to be processed in parallel through one LLM instance.
 
 Key behaviour:
   - Uses LangChain's chain.abatch(inputs, config={"max_concurrency": N})
@@ -20,13 +20,13 @@ Usage:
 
 import csv
 import json
-import asyncio
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 
+from agents.cs_agent import _strip_fences
+from core import constants as const
 from core.checkpoint import CheckpointManager
-from core.cs_agent import _strip_fences
 from core.logger import logger
 
 
@@ -94,7 +94,7 @@ class FRDWorker:
             FRDWorkerResult with counts of completed and failed TCs.
         """
         # ── Output directories ────────────────────────────────────────────────
-        csv_path = self.output_dir / "expected.csv"
+        csv_path = self.output_dir / const.NAME_EXPECTED_CSV
         cuc_dir  = self.output_dir / "cucumber"
         sel_dir  = self.output_dir / "selenium"
         cuc_dir.mkdir(parents=True, exist_ok=True)
@@ -103,10 +103,7 @@ class FRDWorker:
         # Write CSV header only if file doesn't already exist (crash-resume safe)
         if not csv_path.exists():
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow([
-                    "testcase", "description", "category", "preconditions",
-                    "stepname", "expected result", "testdata", "evidence required",
-                ])
+                csv.writer(f).writerow(const.CSV_HEADERS)
 
         # ── Crash recovery: skip already-done TCs ─────────────────────────────
         remaining  = self.checkpoint.get_remaining(self.test_cases)
@@ -187,12 +184,13 @@ class FRDWorker:
             await self.checkpoint.mark_done(tc_id)
             done_count += 1
 
-            # Push progress update to SSE stream
+            # Push progress update to SSE stream. A callback failure only costs a
+            # missed UI tick, so it is logged rather than allowed to abort the run.
             if self.progress_cb:
                 try:
                     await self.progress_cb(self.frd_id, done_count, total)
-                except Exception:
-                    pass   # never crash the worker on a callback failure
+                except Exception as exc:
+                    logger.debug("%s: progress callback failed — %s", tc_id, exc)
 
         logger.info(
             "[FRD] %s: Done — %d/%d completed, %d failed.",

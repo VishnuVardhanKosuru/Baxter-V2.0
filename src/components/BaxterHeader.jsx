@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, CheckCircle, DollarSign, Activity } from 'lucide-react';
+import { ShieldCheck, CheckCircle, DollarSign } from 'lucide-react';
 
 export default function BaxterHeader({
   onOpenJiraModal,

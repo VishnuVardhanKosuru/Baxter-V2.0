@@ -1,15 +1,32 @@
-fastapi>=0.100.0
-uvicorn>=0.23.0
-python-multipart>=0.0.6
-python-dotenv>=1.0.0
-sse-starlette
-litellm
-langchain-litellm
-langchain-core
-langchain-google-genai
-pydantic>=2.0.0
-python-docx>=1.0.0
-requests>=2.31.0
-google-genai>=0.1.1
-openai>=1.0.0
-rich>=13.0.0
+# Baxter V2.0 — Python dependencies
+# All versions are pinned to the exact releases this build was verified against,
+# so a fresh install cannot silently pull a breaking upstream change.
+# Regenerate after intentional upgrades with: pip freeze | grep -i <package>
+
+# -- Web framework -------------------------------------------------------------
+fastapi==0.137.1
+uvicorn==0.49.0
+python-multipart==0.0.32          # multipart/form-data upload parsing
+sse-starlette==3.4.5              # Server-Sent Events for batch progress
+pydantic==2.13.4
+
+# -- Configuration -------------------------------------------------------------
+python-dotenv==1.2.2
+
+# -- LLM orchestration ---------------------------------------------------------
+litellm==1.96.2                   # multi-provider router, retries, cost tracking
+langchain-core==1.5.3             # prompt templates, structured output, abatch
+langchain-litellm==0.7.0          # ChatLiteLLMRouter LangChain adapter
+langchain-google-genai==4.3.2
+
+# -- LLM provider SDKs ---------------------------------------------------------
+google-genai==2.11.0              # Jira attachment classifier (agents/jira_agent.py)
+google-generativeai==0.8.6        # Gemini explicit context cache (core/llm_factory.py)
+openai==2.54.0                    # OpenAI provider + Jira classifier fallback
+
+# -- Document parsing ----------------------------------------------------------
+python-docx==1.2.0
+
+# -- HTTP ----------------------------------------------------------------------
+requests==2.34.2
+urllib3==2.7.0                    # Retry strategy used by the Jira HTTP session
