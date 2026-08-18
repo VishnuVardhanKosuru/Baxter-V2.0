@@ -143,7 +143,7 @@ export default function JiraReleaseSection({
 
         <button
           className="btn-run-pipeline"
-          disabled={pipelineState === 'running' || !epicData}
+          disabled={pipelineState === 'running' || !epicData || selectedFrdIds.length === 0}
           onClick={handleEvaluateClick}
           style={{ padding: '0.55rem 1.25rem', fontSize: '0.875rem' }}
         >

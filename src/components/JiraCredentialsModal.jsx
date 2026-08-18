@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyRound, Mail, Link, Check, ShieldCheck, Sparkles, UploadCloud, ArrowLeft } from 'lucide-react';
+import { KeyRound, Mail, Link, Check, ShieldCheck, Sparkles, UploadCloud, ArrowLeft, X } from 'lucide-react';
 
 export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialCredentials }) {
   const [modalMode, setModalMode] = useState('jira'); // 'jira' or 'manual'
@@ -102,7 +102,7 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
     <div className="jira-modal-overlay">
       <div className="jira-modal-container" onClick={(e) => e.stopPropagation()}>
         {/* Modal Header */}
-        <div className="jira-modal-header">
+        <div className="jira-modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div className="jira-modal-title">
             <div className="jira-icon-badge">
               {modalMode === 'jira' ? (
@@ -120,6 +120,13 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
               </p>
             </div>
           </div>
+          <button
+            onClick={onClose}
+            className="jira-modal-close-btn"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: '#64748b' }}
+          >
+            <X size={20} />
+          </button>
         </div>
 
         {/* Modal Body depending on mode */}

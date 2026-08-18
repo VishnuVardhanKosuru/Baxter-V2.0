@@ -70,12 +70,9 @@ export default function InputSection({
     });
   };
 
-  const isReadyToRun = pipelineState !== 'running';
+  const isReadyToRun = pipelineState !== 'running' && frdFile && excelFile;
 
   const handleRunClick = () => {
-    if (!frdFile || !excelFile) {
-      handleUseSampleFiles();
-    }
     onRunPipeline();
   };
 
