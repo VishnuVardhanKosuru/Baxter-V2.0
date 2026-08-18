@@ -4,25 +4,23 @@ agents/doc_parser.py
 Stage 1 of the Baxter pipeline: turn a folder of Word documents into enriched,
 requirement-mapped test case knowledge JSON.
 
-This module spans two layers, ordered extraction-first:
+This module is organized by execution flow (how parse_documents() calls it):
 
-  Sections 1-3  Deterministic .docx extraction. No LLM, no network. Reads Word
-                XML into DocumentAST and TestCaseModel objects.
-  Sections 4-6  LLM orchestration. Maps test cases to FRD sections, merges the
-                requirement context back in, and writes the output JSON.
+  1. Text utilities         Text splitting and normalization (used by parsers)
+  2. Document discovery     Scan input_modules/ and pair FRDs with test cases
+  3. .docx extraction       Parse Word XML into DocumentAST and TestCaseModel
+  4. Compression/summaries  Compact FRD index and test case summaries for LLM
+  5. LLM mapping            Map test cases to FRD sections (AI or keyword fallback)
+  6. Enrichment             Attach requirement context and auto-generate tags
+  7. Module overview        Extract scope, glossary, and project metadata
+  8. Orchestration          parse_documents() — main entry point
 
-Layout
-------
-  1. Text utilities        split_list_field, split_numbered_steps
-  2. Document discovery    ModulePackage, DocumentClassifier, ModuleFolderScanner
-  3. .docx extraction      FRDModuleParser, TestCaseModuleParser
-  4. LLM mapping           MAPPER_PROMPT, mapper chain, heuristic fallback
-  5. Enrichment            feature context, cucumber tags, module overview
-  6. Orchestration         parse_documents  <- public entry point
+Execution flow in parse_documents():
+  Discover modules -> Parse FRD -> Compress FRD -> Parse test cases ->
+  Compress test cases -> LLM mapping (or fallback) -> Enrich -> Write JSON
 
-Token efficiency: the compact section index and compact test case summaries cut
-mapping prompt size by roughly 25-30%, and requests are load balanced across all
-configured API keys by the LiteLLM router.
+Token efficiency: compact summaries cut mapping prompt size by ~25-30%. Requests
+are load-balanced across all configured API keys via the LiteLLM router.
 
 Public API:
   parse_documents(modules_dir, out_dir, ...) -> List[str]
@@ -96,7 +94,9 @@ def split_numbered_steps(text: str) -> List[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. DOCUMENT DISCOVERY
+# 2. DOCUMENT DISCOVERY — scan modules and pair FRDs with test cases
+# ═══════════════════════════════════════════════════════════════════════════════
+# Called first in parse_documents() to find all module folders and documents.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -204,7 +204,11 @@ class ModuleFolderScanner:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 3. .DOCX EXTRACTION
+# 3. EXTRACTION — parse FRD and test case documents into structured data
+# ═══════════════════════════════════════════════════════════════════════════════
+# FRDModuleParser.parse() is called second; TestCaseModuleParser.parse() third.
+# Both walk the Word XML, recognize patterns (headings, tables, keywords), and
+# extract into DocumentAST (FRD tree) and TestCaseModel objects (test list).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class FRDModuleParser:
@@ -511,7 +515,17 @@ class TestCaseModuleParser:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. LLM MAPPING
+# 4. COMPRESSION & SUMMARY — compact FRD and test cases for LLM efficiency
+# ═══════════════════════════════════════════════════════════════════════════════
+# After extraction, build_compact_section_index() creates a one-line index of
+# each FRD section (~25-30% smaller than raw). Test case summaries are built
+# inline in parse_documents(). These summaries are passed to the LLM.
+#
+# Then: LLM MAPPING
+# ─────────────────
+# _map_all_modules() sends summaries to the LLM in one batched request per module.
+# The LLM answers: "Which FRD section does each test case exercise?"
+# If LLM unavailable or fails, _generate_fallback_mappings() uses keyword matching.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MAPPER_SYSTEM_PROMPT = (
@@ -690,7 +704,14 @@ def _map_all_modules(batch_inputs: List[dict]) -> list:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. ENRICHMENT
+# 5. ENRICHMENT — attach requirement context and auto-generate tags
+# ═══════════════════════════════════════════════════════════════════════════════
+# After mapping, enrich_module_test_cases() takes each test case and:
+#   1. Finds its best-matched FRD section (from the LLM or fallback)
+#   2. Copies that section's full context (description, actors, business rules...)
+#   3. Builds automatic tags (@Login, @Positive, @REQ-42, etc.)
+#
+# Also here: build_module_overview() extracts project scope, glossary, metadata.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_feature_context(sec: SectionNode) -> FeatureContextModel:
@@ -819,7 +840,11 @@ def build_module_overview(ast: DocumentAST) -> ModuleOverviewModel:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. ORCHESTRATION
+# 6. ORCHESTRATION — parse_documents() ties everything together
+# ═══════════════════════════════════════════════════════════════════════════════
+# Public entry point. Calls section 2 (discover) → section 3 (extract) →
+# section 4 (map) → section 5 (enrich) → writes JSON.
+# Also handles two calling conventions: directory mode and single-pair mode.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _resolve_single_pair(frd_path: str, tc_path: str) -> ModulePackage:
