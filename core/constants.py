@@ -298,8 +298,16 @@ COL_SUBSTRING_MIN_LEN = 3
 # Used by ModuleFolderScanner to classify files inside each module folder.
 
 SUPPORTED_DOC_EXT     = ".docx"
-FRD_FILENAME_KEYWORDS = ["frd", "requirement", "spec", "functional"]
-TC_FILENAME_KEYWORDS  = ["tc", "test", "manual", "case", "mtc"]
+FRD_FILENAME_SIGNALS = {
+    "high":   ["frd", "_frd_", "-frd-"],
+    "medium": ["requirement", "functional_spec"],
+    "low":    ["spec", "functional"],
+}
+TC_FILENAME_SIGNALS = {
+    "high":   ["_tc_", "-tc-", "mtc", "testcase"],
+    "medium": ["test_case", "manual_test"],
+    "low":    ["test", "manual", "case"],
+}
 WORD_TEMP_PREFIX      = "~$"
 
 
@@ -308,3 +316,6 @@ WORD_TEMP_PREFIX      = "~$"
 UNKNOWN_FEATURE_REF  = "UNKNOWN"
 DEFAULT_PROJECT_NAME = os.environ.get("DEFAULT_PROJECT_NAME", "ShopSphere")
 DEFAULT_VERSION      = os.environ.get("DEFAULT_VERSION", "2.0")
+
+# Test case types to skip during parsing (e.g. non-UI types since we generate Selenium UI tests)
+DEFAULT_SKIP_TYPES   = ["api", "backend", "performance", "load", "security", "database", "unit"]

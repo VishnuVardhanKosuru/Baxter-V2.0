@@ -115,9 +115,9 @@ class DocumentClassifier:
         """
         Scan a folder and split .docx files into FRD and TC lists.
 
-        Classification is keyword-based (case-insensitive, partial-match) using
-        FRD_FILENAME_KEYWORDS and TC_FILENAME_KEYWORDS from core.constants.
-        Word lock/temp files (``~$*``) are skipped.
+        Classification is based on tiered signals (high, medium, low) using
+        FRD_FILENAME_SIGNALS and TC_FILENAME_SIGNALS from core.constants,
+        to detect conflicts. Word lock/temp files (``~$*``) are skipped.
 
         Args:
             folder_path: Path to the module sub-folder to scan.
@@ -140,10 +140,26 @@ class DocumentClassifier:
                 continue   # Microsoft Word lock/temp file
 
             name_lower = file.name.lower()
-            if any(kw in name_lower for kw in const.FRD_FILENAME_KEYWORDS):
+
+            def get_score(signals: dict, name: str) -> int:
+                if any(kw in name for kw in signals["high"]): return 3
+                if any(kw in name for kw in signals["medium"]): return 2
+                if any(kw in name for kw in signals["low"]): return 1
+                return 0
+
+            frd_score = get_score(const.FRD_FILENAME_SIGNALS, name_lower)
+            tc_score = get_score(const.TC_FILENAME_SIGNALS, name_lower)
+
+            if frd_score == 0 and tc_score == 0:
+                logger.warning("Unclassified document (no keyword match): %s", file)
+                continue
+
+            if frd_score > tc_score:
                 frd_files.append(file)
-            elif any(kw in name_lower for kw in const.TC_FILENAME_KEYWORDS):
+            elif tc_score > frd_score:
                 tc_files.append(file)
+            else:
+                logger.warning("Document classification conflict (FRD vs TC score tied at %d): %s. Skipping.", frd_score, file)
 
         return frd_files, tc_files
 
@@ -887,7 +903,7 @@ def parse_documents(
     Raises:
         FileNotFoundError: in single-pair mode, if either document is missing.
     """
-    skip_types = skip_types or []
+    skip_types = list(skip_types) if skip_types is not None else list(const.DEFAULT_SKIP_TYPES)
 
     is_single_pair = (
         str(modules_dir_or_frd).lower().endswith(const.SUPPORTED_DOC_EXT)
@@ -933,8 +949,22 @@ def parse_documents(
             logger.info("  [TC] Extracting from %s", tc_file.name)
             module_tcs.extend(TestCaseModuleParser.parse(tc_file, package.module_folder))
 
+        if skip_types:
+            skip_set = {s.lower() for s in skip_types}
+            filtered_tcs = [
+                tc for tc in module_tcs
+                if not any(t.lower() in skip_set for t in tc.type)
+            ]
+            if len(filtered_tcs) < len(module_tcs):
+                logger.info(
+                    "  [TC Filter] Filtered out %d non-UI test case(s) matching skip_types %s",
+                    len(module_tcs) - len(filtered_tcs),
+                    skip_types,
+                )
+            module_tcs = filtered_tcs
+
         if not module_tcs:
-            logger.warning("[MODULE] %s: no test cases found — skipping.", package.module_folder)
+            logger.warning("[MODULE] %s: no test cases found after filtering — skipping.", package.module_folder)
             continue
 
         tc_summaries = []
