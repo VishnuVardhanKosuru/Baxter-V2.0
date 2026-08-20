@@ -299,12 +299,12 @@ COL_SUBSTRING_MIN_LEN = 3
 
 SUPPORTED_DOC_EXT     = ".docx"
 FRD_FILENAME_SIGNALS = {
-    "high":   ["frd", "_frd_", "-frd-"],
+    "high":   ["frd", "_frd_", "-frd-","FRD"],
     "medium": ["requirement", "functional_spec"],
     "low":    ["spec", "functional"],
 }
 TC_FILENAME_SIGNALS = {
-    "high":   ["_tc_", "-tc-", "mtc", "testcase"],
+    "high":   ["_tc_", "-tc-", "mtc", "testcase","TCM"],
     "medium": ["test_case", "manual_test"],
     "low":    ["test", "manual", "case"],
 }

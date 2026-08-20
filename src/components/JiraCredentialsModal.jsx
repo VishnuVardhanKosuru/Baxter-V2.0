@@ -4,18 +4,14 @@ import { KeyRound, Mail, Link, Check, ShieldCheck, Sparkles, UploadCloud, ArrowL
 export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialCredentials }) {
   const [modalMode, setModalMode] = useState('jira'); // 'jira' or 'manual'
 
-  // Read env-var defaults for pre-population
-  const envKeys = [
-    import.meta.env.VITE_LLM_API_KEY_1 || '',
-    import.meta.env.VITE_LLM_API_KEY_2 || '',
-    import.meta.env.VITE_LLM_API_KEY_3 || '',
-  ].filter(Boolean);
+  const defaultKey =
+    initialCredentials?.geminiApiKey ||
+    import.meta.env.VITE_LLM_API_KEY ||
+    import.meta.env.VITE_GEMINI_API_KEY ||
+    import.meta.env.VITE_LLM_API_KEY_1 ||
+    '';
 
-  const initialKeys = initialCredentials?.geminiApiKey
-    ? initialCredentials.geminiApiKey.split(',')
-    : envKeys.length > 0 ? envKeys : [''];
-  const [numKeys, setNumKeys] = useState(initialKeys.length || 1);
-  const [geminiApiKeys, setGeminiApiKeys] = useState(initialKeys);
+  const [geminiApiKey, setGeminiApiKey] = useState(defaultKey);
 
   const [jiraUrl, setJiraUrl] = useState(
     initialCredentials?.url || import.meta.env.VITE_JIRA_URL || ''
@@ -32,36 +28,17 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
 
   if (!isOpen) return null;
 
-  const handleNumKeysChange = (e) => {
-    const val = parseInt(e.target.value) || 1;
-    const count = Math.max(1, Math.min(val, 10)); // Limit 1 to 10 keys
-    setNumKeys(count);
-    setGeminiApiKeys(prev => {
-      const newKeys = [...prev];
-      while (newKeys.length < count) newKeys.push('');
-      return newKeys.slice(0, count);
-    });
-  };
-
-  const handleKeyChange = (index, val) => {
-    setGeminiApiKeys(prev => {
-      const newKeys = [...prev];
-      newKeys[index] = val;
-      return newKeys;
-    });
-  };
-
   const handleManualSubmit = (e) => {
     e.preventDefault();
-    const validKeys = geminiApiKeys.map(k => k.trim()).filter(Boolean);
-    if (validKeys.length === 0) {
-      setValidationError('Please enter at least one LLM API Key to connect.');
+    const key = geminiApiKey.trim();
+    if (!key) {
+      setValidationError('Please enter your LLM API Key to connect.');
       return;
     }
     setValidationError('');
     if (onSave) {
       onSave({
-        geminiApiKey: validKeys.join(','),
+        geminiApiKey: key,
         url: jiraUrl,
         email,
         apiToken,
@@ -81,15 +58,15 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
       setValidationError('Please fill in all Jira credentials (URL, Email, API Token).');
       return;
     }
-    const validKeys = geminiApiKeys.map(k => k.trim()).filter(Boolean);
-    if (validKeys.length === 0) {
-      setValidationError('Please enter at least one LLM API Key.');
+    const key = geminiApiKey.trim();
+    if (!key) {
+      setValidationError('Please enter your LLM API Key.');
       return;
     }
     setValidationError('');
     if (onSave) {
       onSave({
-        geminiApiKey: validKeys.join(','),
+        geminiApiKey: key,
         url: jiraUrl,
         email,
         apiToken,
@@ -193,36 +170,20 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
               />
             </div>
 
-            {/* 4. Number of API Keys */}
+            {/* 4. Single LLM API Key */}
             <div className="jira-form-group">
-              <label htmlFor="num-api-keys">
-                Number of LLM API Keys
+              <label htmlFor="jira-llm-key">
+                <Sparkles size={15} /> LLM API Key
               </label>
               <input
-                id="num-api-keys"
-                type="number"
-                min="1"
-                max="10"
-                value={numKeys}
-                onChange={handleNumKeysChange}
+                id="jira-llm-key"
+                type="password"
+                placeholder="Enter your LLM API Key"
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                required
               />
             </div>
-
-            {/* 5. Dynamic Gemini API Keys */}
-            {Array.from({ length: numKeys }).map((_, idx) => (
-              <div className="jira-form-group" key={idx}>
-                <label>
-                  <Sparkles size={15} /> LLM API Key {idx + 1}
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter your LLM API Key"
-                  value={geminiApiKeys[idx] || ''}
-                  onChange={(e) => handleKeyChange(idx, e.target.value)}
-                  required
-                />
-              </div>
-            ))}
 
             {validationError && (
               <div className="jira-error-message" style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>
@@ -255,7 +216,7 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
             </div>
           </form>
         ) : (
-          /* MANUAL FORM MODE (Only Gemini API Key) */
+          /* MANUAL FORM MODE (Single LLM API Key) */
           <form onSubmit={handleManualSubmit} className="jira-modal-form">
             <div style={{ marginBottom: '0.2rem' }}>
               <button
@@ -269,37 +230,21 @@ export default function JiraCredentialsModal({ isOpen, onClose, onSave, initialC
               </button>
             </div>
 
-            {/* Number of API Keys */}
+            {/* Single LLM API Key */}
             <div className="jira-form-group">
-              <label htmlFor="num-api-keys-manual">
-                Number of LLM API Keys
+              <label htmlFor="manual-llm-key">
+                <Sparkles size={15} /> LLM API Key
               </label>
               <input
-                id="num-api-keys-manual"
-                type="number"
-                min="1"
-                max="10"
-                value={numKeys}
-                onChange={handleNumKeysChange}
+                id="manual-llm-key"
+                type="password"
+                placeholder="Enter your LLM API Key"
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                required
+                autoFocus
               />
             </div>
-
-            {/* Dynamic Gemini API Keys */}
-            {Array.from({ length: numKeys }).map((_, idx) => (
-              <div className="jira-form-group" key={idx}>
-                <label>
-                  <Sparkles size={15} /> LLM API Key {idx + 1}
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter your LLM API Key"
-                  value={geminiApiKeys[idx] || ''}
-                  onChange={(e) => handleKeyChange(idx, e.target.value)}
-                  required
-                  autoFocus={idx === 0}
-                />
-              </div>
-            ))}
 
             {validationError && (
               <div className="jira-error-message" style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>

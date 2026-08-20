@@ -32,7 +32,7 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
     return (
       entry.phase.toLowerCase().includes(term) ||
       entry.model.toLowerCase().includes(term) ||
-      entry.key_alias.toLowerCase().includes(term) ||
+      (entry.key_alias && entry.key_alias.toLowerCase().includes(term)) ||
       entry.timestamp.toLowerCase().includes(term)
     );
   });
@@ -167,7 +167,7 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                   : '$0.000000'}
               </div>
               <div style={{ fontSize: '0.725rem', color: '#64748B', marginTop: '0.15rem' }}>
-                Optimized Multi-Key Router
+                LLM API Router
               </div>
             </div>
           </div>
@@ -270,43 +270,12 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                           <strong>{p.total_tokens.toLocaleString()}</strong>
                         </div>
                         <div>
-                          <span style={{ color: '#64748B' }}>Models: </span>
+                          <span style={{ color: '#64748B' }}>Model / API: </span>
                           <span title={p.models.join(', ')} style={{ fontWeight: 600 }}>
                             {p.models.join(', ') || 'Default'}
                           </span>
                         </div>
                       </div>
-
-                      {/* Sub-breakdown per API Key */}
-                      {p.key_breakdown && p.key_breakdown.length > 0 && (
-                        <div style={{ marginTop: '0.85rem', borderTop: '1px solid #E2E8F0', paddingTop: '0.85rem' }}>
-                          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', marginBottom: '0.5rem', textAlign: 'center', letterSpacing: '0.05em' }}>
-                            BREAKDOWN BY API KEY
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
-                            {p.key_breakdown.map((kb, kbIdx) => (
-                              <div key={kbIdx} style={{
-                                display: 'flex',
-                                justifyContent: 'center',
-                                flexWrap: 'wrap',
-                                gap: '1.5rem',
-                                backgroundColor: '#F1F5F9',
-                                padding: '0.5rem 1rem',
-                                borderRadius: '6px',
-                                fontSize: '0.75rem',
-                                color: '#475569',
-                                width: '100%'
-                              }}>
-                                <div style={{ fontWeight: 600, color: '#0033A0', minWidth: '90px' }}>{kb.key_alias}</div>
-                                <div>Calls: <strong>{kb.calls}</strong></div>
-                                <div>In: <strong>{kb.input_tokens.toLocaleString()}</strong></div>
-                                <div>Out: <strong>{kb.output_tokens.toLocaleString()}</strong></div>
-                                <div style={{ color: '#047857', fontWeight: 700 }}>{kb.cost_formatted}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -320,7 +289,7 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.85rem' }}>
                 <input
                   type="text"
-                  placeholder="Filter logs by phase, model, or key..."
+                  placeholder="Filter logs by phase, model, or timestamp..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   style={{
@@ -350,7 +319,7 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                       <tr style={{ background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', textAlign: 'left', color: '#475569' }}>
                         <th style={{ padding: '0.5rem 0.75rem' }}>Timestamp</th>
                         <th style={{ padding: '0.5rem 0.75rem' }}>Phase</th>
-                        <th style={{ padding: '0.5rem 0.75rem' }}>Model / Key</th>
+                        <th style={{ padding: '0.5rem 0.75rem' }}>Model / API</th>
                         <th style={{ padding: '0.5rem 0.75rem' }}>Tokens (In / Out)</th>
                         <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>Cost</th>
                       </tr>
@@ -367,7 +336,7 @@ export default function CostMetricsModal({ isOpen, onClose, metrics, onRefresh }
                             </span>
                           </td>
                           <td style={{ padding: '0.45rem 0.75rem', color: '#334155', fontWeight: 500 }}>
-                            {entry.model} <span style={{ color: '#64748B', fontSize: '0.725rem' }}>({entry.key_alias})</span>
+                            {entry.model}
                           </td>
                           <td style={{ padding: '0.45rem 0.75rem', color: '#475569' }}>
                             {entry.input_tokens.toLocaleString()} / {entry.output_tokens.toLocaleString()}
