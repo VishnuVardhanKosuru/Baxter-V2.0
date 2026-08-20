@@ -28,6 +28,7 @@ Public API:
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -91,6 +92,32 @@ def split_numbered_steps(text: str) -> List[str]:
     """
     cleaned = const.REGEX_WHITESPACE.sub(" ", (text or "").strip())
     return [p.strip() for p in const.REGEX_NUMBERED_STEPS.split(cleaned) if p.strip()]
+
+
+def clean_frd_name(name_or_path: str) -> str:
+    """
+    Derive a clean module/folder name from an FRD filename or path by stripping
+    file extensions, '_FRD' / '-FRD' / 'FRD_' tokens, and invalid path chars.
+    Preserves original casing, hyphens, and underscores.
+
+    Example:
+      'E-Commerce_Admin_StockInventoryManagement_AnalyticsReporting_FRD.docx'
+      -> 'E-Commerce_Admin_StockInventoryManagement_AnalyticsReporting'
+    """
+    if not name_or_path:
+        return "Module"
+    stem = Path(str(name_or_path)).stem
+    # Remove _FRD or -FRD suffix (case-insensitive)
+    cleaned = re.sub(r'[-_]frd$', '', stem, flags=re.IGNORECASE)
+    # Remove FRD_ or FRD- prefix
+    cleaned = re.sub(r'^frd[-_]', '', cleaned, flags=re.IGNORECASE)
+    # Remove inline _FRD_
+    cleaned = re.sub(r'[-_]frd[-_]', '_', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" -_")
+    if not cleaned:
+        cleaned = stem
+    cleaned = re.sub(r'[\\/*?:"<>|\r\n\t]', '_', cleaned).strip()
+    return cleaned or "Module"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -210,8 +237,11 @@ class ModuleFolderScanner:
                 continue
             frd_files, tc_files = DocumentClassifier.classify_files(item)
             if frd_files or tc_files:
+                module_name = item.name
+                if (item.name.isdigit() or item.name.lower() in ("input_modules", "module", "modules")) and frd_files:
+                    module_name = clean_frd_name(frd_files[0].name)
                 packages.append(ModulePackage(
-                    module_folder=item.name,
+                    module_folder=module_name,
                     frd_files=frd_files,
                     tc_files=tc_files,
                 ))
@@ -876,7 +906,7 @@ def _resolve_single_pair(frd_path: str, tc_path: str) -> ModulePackage:
     if missing:
         raise FileNotFoundError(f"Input document(s) not found: {', '.join(missing)}")
 
-    module_name = frd_p.stem.replace("_FRD", "").replace("FRD_", "") or "Module"
+    module_name = clean_frd_name(frd_p.stem) or "Module"
     return ModulePackage(module_folder=module_name, frd_files=[frd_p], tc_files=[tc_p])
 
 
@@ -1007,9 +1037,7 @@ def parse_documents(
         enriched = enrich_module_test_cases(module_tcs, mapping_response, ast)
         overview = build_module_overview(ast)
 
-        module_slug = "".join(
-            c if c.isalnum() else "_" for c in package.module_folder.lower()
-        ).strip("_") or "module"
+        module_slug = clean_frd_name(package.module_folder)
         module_out_path = knowledge_dir / f"{module_slug}_knowledge.json"
 
         module_payload = ParsedDocumentResponse(

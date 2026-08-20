@@ -59,7 +59,7 @@ from sse_starlette.sse import EventSourceResponse
 load_dotenv()
 
 from agents.cs_agent import run_agent
-from agents.doc_parser import parse_documents, reset_mapper_chain
+from agents.doc_parser import clean_frd_name, parse_documents, reset_mapper_chain
 from agents.jira_agent import JiraClient, LLMAnalyzer, sanitize_filename
 from core import constants as const
 from core.batch_manager import batch_manager, JobStatus
@@ -1038,7 +1038,19 @@ async def evaluate_jira_epic(payload: JiraEpicRequest, request: Request):
         folders_created = []
 
         for i, (frd, tc) in enumerate(paired):
-            folder = INPUT_MODULES_DIR / str(next_num + i)
+            if frd and (frd.get("sug_name") or frd.get("filename")):
+                folder_name = clean_frd_name(frd.get("sug_name") or frd.get("filename"))
+            elif tc and (tc.get("sug_name") or tc.get("filename")):
+                folder_name = clean_frd_name(tc.get("sug_name") or tc.get("filename")).replace("_TC", "").replace("TC_", "")
+            else:
+                folder_name = f"Module_{next_num + i}"
+
+            target_folder = INPUT_MODULES_DIR / folder_name
+            if target_folder in folders_created:
+                folder = INPUT_MODULES_DIR / f"{folder_name}_{i+1}"
+            else:
+                folder = target_folder
+
             folder.mkdir(parents=True, exist_ok=True)
             folder_had_download = False
 
